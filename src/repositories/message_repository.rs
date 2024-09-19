@@ -128,6 +128,7 @@ impl MessageRepository {
                         updated_at: messages_with_source.updated_at,
                         group_id: messages_with_source.group_id,
                         source_id: messages_with_source.source.id,
+                        idempotency_key: messages_with_source.idempotency_key,
                 };
 
                 let mut connection = self

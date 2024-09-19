@@ -93,6 +93,7 @@ pub async fn get_group_messages(
                                 .get(&auth_user.id)
                                 .expect("Got message not for auth user")
                                 .clone(),
+                        idempotency_key: message.idempotency_key,
                 })
                 .collect::<Vec<MessageResponseDto>>();
 
@@ -143,6 +144,7 @@ pub async fn create_group_message(
                                 .into_iter()
                                 .filter_map(|(k, v)| k.parse::<i64>().ok().map(|key| (key, v)))
                                 .collect(),
+                        idempotency_key: body.idempotency_key.clone(),
                 })?
         };
 
@@ -156,5 +158,6 @@ pub async fn create_group_message(
                         .get(&auth_user.id)
                         .expect("Got message not for auth user")
                         .clone(),
+                idempotency_key: message.idempotency_key,
         }))
 }

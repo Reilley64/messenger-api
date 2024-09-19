@@ -131,6 +131,7 @@ pub struct Message {
         pub updated_at: chrono::NaiveDateTime,
         pub group_id: i64,
         pub source_id: i64,
+        pub idempotency_key: Option<String>,
 }
 
 #[derive(Queryable, Identifiable, Selectable, Insertable, Associations, AsChangeset, Debug, PartialEq)]
@@ -151,6 +152,7 @@ pub struct MessageWithSource {
         pub group_id: i64,
         pub source: User,
         pub content: HashMap<i64, String>,
+        pub idempotency_key: Option<String>,
 }
 
 impl From<(Message, User, HashMap<i64, String>)> for MessageWithSource {
@@ -162,6 +164,7 @@ impl From<(Message, User, HashMap<i64, String>)> for MessageWithSource {
                         group_id: message.group_id,
                         source,
                         content,
+                        idempotency_key: message.idempotency_key,
                 }
         }
 }
@@ -173,6 +176,7 @@ pub struct MessageWithGroup {
         pub group: GroupWithRelationships,
         pub source: User,
         pub content: String,
+        pub idempotency_key: Option<String>,
 }
 
 impl From<(Message, GroupWithRelationships, User, MessageContent)> for MessageWithGroup {
@@ -184,6 +188,7 @@ impl From<(Message, GroupWithRelationships, User, MessageContent)> for MessageWi
                         group,
                         source,
                         content: content.content,
+                        idempotency_key: message.idempotency_key,
                 }
         }
 }

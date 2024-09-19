@@ -110,6 +110,7 @@ impl From<GroupWithRelationships> for GroupResponseDto {
 #[serde(rename_all = "camelCase")]
 pub struct MessageRequestDto {
         pub content: HashMap<String, String>,
+        pub idempotency_key: Option<String>,
 }
 
 #[derive(Serialize, JsonSchema, ApiComponent)]
@@ -120,6 +121,7 @@ pub struct MessageResponseDto {
         pub updated_at: chrono::NaiveDateTime,
         pub source: UserResponseDto,
         pub content: String,
+        pub idempotency_key: Option<String>,
 }
 
 #[derive(Serialize, JsonSchema, ApiComponent)]
@@ -131,4 +133,5 @@ pub struct MessageWithGroupResponseDto {
         pub group: GroupResponseDto,
         pub source: UserResponseDto,
         pub content: String,
+        pub idempotency_key: Option<String>,
 }

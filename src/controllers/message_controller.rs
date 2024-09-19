@@ -39,6 +39,7 @@ pub async fn get_messages(
                         group: GroupResponseDto::from(message.group),
                         source: UserResponseDto::from(message.source),
                         content: message.content,
+                        idempotency_key: message.idempotency_key,
                 })
                 .collect::<Vec<MessageWithGroupResponseDto>>();
 

@@ -50,6 +50,8 @@ diesel::table! {
         updated_at -> Timestamp,
         group_id -> Int8,
         source_id -> Int8,
+        #[max_length = 255]
+        idempotency_key -> Nullable<Varchar>,
     }
 }
 
