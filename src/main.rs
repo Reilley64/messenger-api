@@ -82,7 +82,7 @@ async fn main() -> std::io::Result<()> {
                                         .wrap(AuthMiddleware)
                                         .service(
                                                 tagged_scope("user", vec!["auth-rest-controller"]).service(
-                                                        resource("/").route(get().to(auth_controller::get_auth_user)),
+                                                        resource("").route(get().to(auth_controller::get_auth_user)),
                                                 ),
                                         )
                                         .service(
@@ -101,15 +101,15 @@ async fn main() -> std::io::Result<()> {
                                                                         )),
                                                         ),
                                         )
-                                        .service(tagged_scope("/messages", vec!["message-rest-controller"]).service(
-                                                resource("/messages").route(get().to(message_controller::get_messages)),
+                                        .service(tagged_scope("messages", vec!["message-rest-controller"]).service(
+                                                resource("").route(get().to(message_controller::get_messages)),
                                         ))
                                         .service(
                                                 tagged_scope(
                                                         "/message-requests",
                                                         vec!["message-request-rest-controller"],
                                                 )
-                                                .service(resource("/").route(
+                                                .service(resource("").route(
                                                         post().to(message_request_controller::create_message_request),
                                                 ))
                                                 .service(resource("/{message_request_id}").route(
@@ -122,7 +122,7 @@ async fn main() -> std::io::Result<()> {
                                                 ),
                                         )
                                         .service(
-                                                tagged_scope("/users", vec!["user-rest-controller"])
+                                                tagged_scope("users", vec!["user-rest-controller"])
                                                         .service(
                                                                 resource("/")
                                                                         .route(post().to(user_controller::create_user)),

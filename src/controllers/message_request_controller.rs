@@ -47,6 +47,7 @@ pub async fn get_message_request(
 
 #[api_operation(operation_id = "create_message_request")]
 pub async fn create_message_request(
+        _: BearerAuth,
         data: Data<AppState>,
         body: Json<MessageRequestRequestDto>,
 ) -> Result<Json<MessageRequestResponseDto>, Problem> {
@@ -95,6 +96,7 @@ pub async fn create_message_request(
 
 #[api_operation(operation_id = "approve_message_request")]
 pub async fn approve_message_request(
+        _: BearerAuth,
         data: Data<AppState>,
         path: Path<(String,)>,
 ) -> Result<Json<MessageRequestResponseDto>, Problem> {

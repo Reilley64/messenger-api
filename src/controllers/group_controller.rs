@@ -47,6 +47,7 @@ pub async fn get_group(
 
 #[api_operation(operation_id = "get_group_messages")]
 pub async fn get_group_messages(
+        _: BearerAuth,
         data: Data<AppState>,
         path: Path<(String,)>,
 ) -> Result<Json<Vec<MessageResponseDto>>, Problem> {
