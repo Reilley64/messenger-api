@@ -29,6 +29,7 @@ impl MessageRepository {
                         .inner_join(users::table.on(users::id.eq(messages::source_id)))
                         .filter(messages::group_id.eq(group_id))
                         .select((messages::all_columns, users::all_columns))
+                        .order_by(messages::id.desc())
                         .load::<(Message, User)>(&mut connection)
                         .map_err(|_| Problem::InternalServerError("failed to query database".to_string()))?;
 

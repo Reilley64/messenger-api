@@ -81,56 +81,47 @@ async fn main() -> std::io::Result<()> {
                                 tagged_scope("v1", vec!["v1"])
                                         .wrap(AuthMiddleware)
                                         .service(
-                                                tagged_scope("user", vec!["auth-rest-controller"]).service(
-                                                        resource("").route(get().to(auth_controller::get_auth_user)),
-                                                ),
+                                                tagged_scope("user", vec!["auth-rest-controller"])
+                                                        .route("/", get().to(auth_controller::get_auth_user)),
                                         )
                                         .service(
                                                 tagged_scope("groups", vec!["group-rest-controller"])
-                                                        .service(
-                                                                resource("/{group_id}")
-                                                                        .route(get().to(group_controller::get_group)),
+                                                        .route("/{group_id}", get().to(group_controller::get_group))
+                                                        .route(
+                                                                "/{group_id}/messages",
+                                                                get().to(group_controller::get_group_messages),
                                                         )
-                                                        .service(
-                                                                resource("/{group_id}/messages")
-                                                                        .route(get().to(
-                                                                                group_controller::get_group_messages,
-                                                                        ))
-                                                                        .route(post().to(
-                                                                                group_controller::create_group_message,
-                                                                        )),
+                                                        .route(
+                                                                "/{group_id}/messages",
+                                                                post().to(group_controller::create_group_message),
                                                         ),
                                         )
-                                        .service(tagged_scope("messages", vec!["message-rest-controller"]).service(
-                                                resource("").route(get().to(message_controller::get_messages)),
-                                        ))
+                                        .service(
+                                                tagged_scope("messages", vec!["message-rest-controller"])
+                                                        .route("/", get().to(message_controller::get_messages)),
+                                        )
                                         .service(
                                                 tagged_scope(
                                                         "/message-requests",
                                                         vec!["message-request-rest-controller"],
                                                 )
-                                                .service(resource("").route(
+                                                .route(
+                                                        "/",
                                                         post().to(message_request_controller::create_message_request),
-                                                ))
-                                                .service(resource("/{message_request_id}").route(
+                                                )
+                                                .route(
+                                                        "/{message_request_id}",
                                                         get().to(message_request_controller::get_message_request),
-                                                ))
-                                                .service(
-                                                        resource("/{message_request_id}/approve").route(post().to(
-                                                                message_request_controller::approve_message_request,
-                                                        )),
+                                                )
+                                                .route(
+                                                        "/{message_request_id}/approve",
+                                                        get().to(message_request_controller::approve_message_request),
                                                 ),
                                         )
                                         .service(
                                                 tagged_scope("users", vec!["user-rest-controller"])
-                                                        .service(
-                                                                resource("/")
-                                                                        .route(post().to(user_controller::create_user)),
-                                                        )
-                                                        .service(
-                                                                resource("/{user_id}")
-                                                                        .route(get().to(user_controller::get_user)),
-                                                        ),
+                                                        .route("/", post().to(user_controller::create_user))
+                                                        .route("/{user_id}", get().to(user_controller::get_user)),
                                         ),
                         )
                         .build("/openapi.json")
