@@ -1,0 +1,9 @@
+services:
+  db:
+    image: postgres:16
+    ports:
+      - "10001:5432"
+    environment:
+      POSTGRES_PASSWORD: darkrai12
+    shm_size: 128mb
+    restart: unless-stopped

@@ -1,0 +1,310 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Transform: AWS::Serverless-2016-10-31
+
+Parameters:
+  AWSAccountId:
+    Type: String
+  CertificateArn:
+    Type: String
+  DatabaseUsername:
+    Type: String
+    Default: "messenger"
+    NoEcho: true
+  DatabasePassword:
+    Type: String
+    NoEcho: true
+  HostedZoneName:
+    Type: String
+  LogGroupName:
+    Type: String
+    Default: "/ecs/messenger"
+  VpcId:
+    Type: String
+
+Resources:
+  DBSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: "database security group"
+      VpcId: !Ref VpcId
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 5432
+          ToPort: 5432
+          CidrIp: 0.0.0.0/0
+
+  Database:
+    Type: AWS::RDS::DBInstance
+    Properties:
+      AllocatedStorage: "20"
+      DBInstanceClass: "db.t4g.micro"
+      Engine: "postgres"
+      EngineVersion: "16.3"
+      MasterUsername: !Ref DatabaseUsername
+      MasterUserPassword: !Ref DatabasePassword
+      VPCSecurityGroups:
+        - !Ref DBSecurityGroup
+
+  UserPool:
+    Type: AWS::Cognito::UserPool
+    Properties:
+      Policies:
+        PasswordPolicy:
+          MinimumLength: 8
+      Schema:
+        - Name: "email"
+          AttributeDataType: "String"
+          Required: true
+        - Name: "phone_number"
+          AttributeDataType: "String"
+          Required: true
+        - Name: "given_name"
+          AttributeDataType: "String"
+          Required: true
+        - Name: "family_name"
+          AttributeDataType: "String"
+          Required: true
+      UsernameAttributes:
+        - "email"
+
+  UserPoolClient:
+    Type: AWS::Cognito::UserPoolClient
+    Properties:
+      ExplicitAuthFlows:
+        - "ALLOW_REFRESH_TOKEN_AUTH"
+        - "ALLOW_USER_PASSWORD_AUTH"
+      UserPoolId: !Ref UserPool
+
+  ECRRepository:
+    Type: AWS::ECR::Repository
+
+  CodeBuild:
+    Type: AWS::CodeBuild::Project
+    Properties:
+      Artifacts:
+        Type: NO_ARTIFACTS
+      Environment:
+        ComputeType: "BUILD_GENERAL1_SMALL"
+        EnvironmentVariables:
+          - Name: "AWS_ACCOUNT_ID"
+            Value: !Ref AWSAccountId
+          - Name: "IMAGE_REPO_NAME"
+            Value: !GetAtt ECRRepository.RepositoryUri
+        Image: "aws/codebuild/amazonlinux2-aarch64-standard:3.0"
+        PrivilegedMode: true
+        Type: "ARM_CONTAINER"
+      ServiceRole: !Ref CodeBuildRole
+      Source:
+        Type: GITHUB
+        Location: "https://github.com/Reilley64/messenger-api"
+
+  CodeBuildRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: codebuild.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: CodeBuildPermissions
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - ecr:BatchCheckLayerAvailability
+                  - ecr:CompleteLayerUpload
+                  - ecr:GetAuthorizationToken
+                  - ecr:InitiateLayerUpload
+                  - ecr:PutImage
+                  - ecr:UploadLayerPart
+                  - s3:GetObject
+                  - s3:GetObjectVersion
+                  - s3:PutObject
+                  - cloudwatch:*
+                  - logs:*
+                Resource: "*"
+
+  SecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: "messenger security group"
+      VpcId: !Ref VpcId
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: 0.0.0.0/0
+
+  ALB:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Properties:
+      Subnets:
+        - subnet-06c374e938a0becea
+        - subnet-03b4f3e0b54e2c277
+        - subnet-01de46f2a7341f13f
+        - subnet-01eba24bed811ec23
+        - subnet-0ba6b62c704444b29
+        - subnet-07f08592aaa2f945a
+      SecurityGroups:
+        - !Ref SecurityGroup
+
+  ALBTargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      HealthCheckPath: /health
+      Port: 80
+      Protocol: HTTP
+      VpcId: !Ref VpcId
+      TargetType: ip
+
+  ALBHttpListener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      DefaultActions:
+        - Type: redirect
+          RedirectConfig:
+            Protocol: HTTPS
+            Port: "443"
+            StatusCode: HTTP_301
+      LoadBalancerArn: !Ref ALB
+      Port: 80
+      Protocol: HTTP
+
+  ALBHttpsListener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      DefaultActions:
+        - Type: forward
+          TargetGroupArn: !Ref ALBTargetGroup
+      Certificates:
+        - CertificateArn: !Ref CertificateArn
+      LoadBalancerArn: !Ref ALB
+      Port: 443
+      Protocol: HTTPS
+
+  Route53RecordSet:
+    Type: AWS::Route53::RecordSet
+    Properties:
+      HostedZoneName: !Ref HostedZoneName
+      Name: !Sub "api.${HostedZoneName}"
+      Type: A
+      AliasTarget:
+        DNSName: !GetAtt ALB.DNSName
+        HostedZoneId: !GetAtt ALB.CanonicalHostedZoneID
+
+  ECSCluster:
+    Type: AWS::ECS::Cluster
+
+  ECSTaskExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ecs-tasks.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: ECSExecutionPolicy
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - ecr:GetAuthorizationToken
+                  - ecr:GetDownloadUrlForLayer
+                  - ecr:BatchGetImage
+                  - logs:*
+                Resource: "*"
+
+  ECSTaskRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ecs-tasks.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: ECSExecutionPolicy
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - cognito-idp:*
+                Resource: "*"
+
+  ECSTaskDefinition:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      ContainerDefinitions:
+        - Name: Messenger
+          Image: !Sub "${ECRRepository.RepositoryUri}@sha256:3680c48fc603a53f5318b48da8771beb6a39e167d45a6ab229562794b4ce4843"
+          Environment:
+            - Name: "SERVER_HOST"
+              Value: "0.0.0.0"
+            - Name: "SERVER_PORT"
+              Value: "80"
+            - Name: "AWS_COGNITO_USER_POOL_ID"
+              Value: !Ref UserPool
+            - Name: "DATABASE_URL"
+              Value: !Sub "postgresql://${DatabaseUsername}:${DatabasePassword}@${Database.Endpoint.Address}/postgres"
+          PortMappings:
+            - ContainerPort: 80
+              Protocol: tcp
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-group: !Ref LogGroupName
+              awslogs-region: !Ref AWS::Region
+              awslogs-stream-prefix: "ecs"
+      Cpu: "256"
+      ExecutionRoleArn: !Ref ECSTaskExecutionRole
+      Memory: "512"
+      NetworkMode: awsvpc
+      RequiresCompatibilities:
+        - FARGATE
+      RuntimePlatform:
+        CpuArchitecture: "ARM64"
+      TaskRoleArn: !Ref ECSTaskRole
+
+  ECSService:
+    Type: AWS::ECS::Service
+    DependsOn: ALB
+    Properties:
+      Cluster: !Ref ECSCluster
+      LaunchType: FARGATE
+      LoadBalancers:
+        - ContainerName: Messenger
+          ContainerPort: 80
+          TargetGroupArn: !Ref ALBTargetGroup
+      NetworkConfiguration:
+        AwsvpcConfiguration:
+          Subnets:
+            - subnet-06c374e938a0becea
+            - subnet-03b4f3e0b54e2c277
+            - subnet-01de46f2a7341f13f
+            - subnet-01eba24bed811ec23
+            - subnet-0ba6b62c704444b29
+            - subnet-07f08592aaa2f945a
+          SecurityGroups:
+            - !Ref SecurityGroup
+          AssignPublicIp: "ENABLED"
+      TaskDefinition: !Ref ECSTaskDefinition
+
+  CloudWatchLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Ref LogGroupName
