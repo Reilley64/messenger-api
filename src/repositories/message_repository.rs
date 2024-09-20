@@ -5,7 +5,7 @@ use crate::models::{
         Group, GroupUser, GroupUserWithRelationships, GroupWithRelationships, Message, MessageContent,
         MessageWithGroup, MessageWithSource, User,
 };
-use crate::schema::{groups, message_content, messages, users};
+use crate::schema::{group_users, groups, message_content, messages, users};
 use diesel::prelude::*;
 use diesel::r2d2::{self, ConnectionManager};
 
@@ -80,7 +80,9 @@ impl MessageRepository {
                                                 Problem::InternalServerError("failed to query database".to_string())
                                         })?;
 
-                                let group_users = GroupUser::belonging_to(&group)
+                                let group_users = group_users::table
+                                        .filter(group_users::group_id.eq(group.id))
+                                        .select(group_users::all_columns)
                                         .load::<GroupUser>(&mut connection)
                                         .map_err(|_| {
                                                 Problem::InternalServerError("failed to query database".to_string())

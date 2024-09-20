@@ -5,7 +5,7 @@ use log::error;
 
 use crate::dtos::{MessageRequestRequestDto, MessageRequestResponseDto};
 use crate::errors::problem::Problem;
-use crate::models::{Group, MessageRequestWithRelationships};
+use crate::models::{GroupUserWithRelationships, GroupWithRelationships, MessageRequestWithRelationships};
 use crate::{AppState, BearerAuth};
 
 #[api_operation(operation_id = "get_message_request")]
@@ -134,12 +134,30 @@ pub async fn approve_message_request(
 
         {
                 let mut id_generator = data.id_generator.lock().unwrap();
-                data.group_repository.save(Group {
+                data.group_repository.save(GroupWithRelationships {
                         id: id_generator.generate(),
                         created_at: Utc::now().naive_utc(),
                         updated_at: Utc::now().naive_utc(),
                         name: None,
                         message_request_id: Some(message_request.id),
+                        users: vec![
+                                GroupUserWithRelationships {
+                                        id: id_generator.generate(),
+                                        created_at: Utc::now().naive_utc(),
+                                        updated_at: Utc::now().naive_utc(),
+                                        user: message_request.source.clone(),
+                                        is_admin: true,
+                                        nickname: None,
+                                },
+                                GroupUserWithRelationships {
+                                        id: id_generator.generate(),
+                                        created_at: Utc::now().naive_utc(),
+                                        updated_at: Utc::now().naive_utc(),
+                                        user: message_request.destination.clone(),
+                                        is_admin: true,
+                                        nickname: None,
+                                },
+                        ],
                 })?;
         }
 

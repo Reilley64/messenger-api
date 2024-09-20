@@ -38,7 +38,11 @@ impl MessageRequestRepository {
                         .filter(message_requests::id
                                 .eq(message_request_id)
                                 .and(message_requests::destination_id.eq(destination_id)))
-                        .select((message_requests::all_columns, users::all_columns, users::all_columns))
+                        .select((
+                                message_requests::all_columns,
+                                users::all_columns,
+                                destination_users.fields(users::all_columns),
+                        ))
                         .first::<(MessageRequest, User, User)>(&mut connection)
                         .optional()
                         .map_err(|_| Problem::InternalServerError("failed to query database".to_string()))?;

@@ -52,7 +52,7 @@ impl From<(MessageRequest, User, User)> for MessageRequestWithRelationships {
         }
 }
 
-#[derive(Queryable, Identifiable, Selectable, Insertable, AsChangeset, Debug, PartialEq)]
+#[derive(Queryable, Selectable, Insertable, AsChangeset, Debug, Clone)]
 #[diesel(table_name = schema::groups)]
 #[diesel(check_for_backend(diesel::pg::Pg))]
 pub struct Group {
@@ -63,7 +63,7 @@ pub struct Group {
         pub message_request_id: Option<i64>,
 }
 
-#[derive(Queryable, Identifiable, Selectable, Insertable, Associations, Debug, PartialEq, Clone)]
+#[derive(Queryable, Selectable, Insertable, AsChangeset, Debug, Clone)]
 #[diesel(belongs_to(Group))]
 #[diesel(table_name = schema::group_users)]
 #[diesel(check_for_backend(diesel::pg::Pg))]
