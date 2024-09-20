@@ -1,12 +1,11 @@
 use actix_web::web::{Data, Json, Path};
 use apistos::api_operation;
 use chrono::Utc;
-use log::error;
 
 use crate::dtos::{GroupResponseDto, MessageRequestDto, MessageResponseDto, UserResponseDto};
 use crate::errors::problem::Problem;
 use crate::models::MessageWithSource;
-use crate::{AppState, BearerAuth};
+use crate::{get_auth_user_from_cache, AppState, BearerAuth};
 
 #[api_operation(operation_id = "get_group")]
 pub async fn get_group(
@@ -20,22 +19,7 @@ pub async fn get_group(
                 .parse::<i64>()
                 .map_err(|_| Problem::BadRequest("Invalid group_id".to_string()))?;
 
-        let sub =
-                data.sub.lock()
-                        .map_err(|_| {
-                                error!("failed to retrieve sub from app data");
-                                Problem::InternalServerError("failed to retrieve sub from  app data".to_string())
-                        })?
-                        .clone()
-                        .ok_or_else(|| {
-                                error!("failed to retrieve sub from app data");
-                                Problem::InternalServerError("failed to retrieve sub from  app data".to_string())
-                        })?;
-
-        let auth_user = data.user_repository.find_by_sub(sub)?.ok_or_else(|| {
-                error!("failed to find auth user with sub");
-                Problem::InternalServerError("failed to find auth user with sub".to_string())
-        })?;
+        let auth_user = get_auth_user_from_cache(&data).await?;
 
         let group = data
                 .group_repository
@@ -57,22 +41,7 @@ pub async fn get_group_messages(
                 .parse::<i64>()
                 .map_err(|_| Problem::BadRequest("Invalid group_id".to_string()))?;
 
-        let sub =
-                data.sub.lock()
-                        .map_err(|_| {
-                                error!("failed to retrieve sub from app data");
-                                Problem::InternalServerError("failed to retrieve sub from  app data".to_string())
-                        })?
-                        .clone()
-                        .ok_or_else(|| {
-                                error!("failed to retrieve sub from app data");
-                                Problem::InternalServerError("failed to retrieve sub from  app data".to_string())
-                        })?;
-
-        let auth_user = data.user_repository.find_by_sub(sub)?.ok_or_else(|| {
-                error!("failed to find auth user with sub");
-                Problem::InternalServerError("failed to find auth user with sub".to_string())
-        })?;
+        let auth_user = get_auth_user_from_cache(&data).await?;
 
         let group = data
                 .group_repository
@@ -113,22 +82,7 @@ pub async fn create_group_message(
                 .parse::<i64>()
                 .map_err(|_| Problem::BadRequest("Invalid group_id".to_string()))?;
 
-        let sub =
-                data.sub.lock()
-                        .map_err(|_| {
-                                error!("failed to retrieve sub from app data");
-                                Problem::InternalServerError("failed to retrieve sub from  app data".to_string())
-                        })?
-                        .clone()
-                        .ok_or_else(|| {
-                                error!("failed to retrieve sub from app data");
-                                Problem::InternalServerError("failed to retrieve sub from  app data".to_string())
-                        })?;
-
-        let auth_user = data.user_repository.find_by_sub(sub)?.ok_or_else(|| {
-                error!("failed to find auth user with sub");
-                Problem::InternalServerError("failed to find auth user with sub".to_string())
-        })?;
+        let auth_user = get_auth_user_from_cache(&data).await?;
 
         let message = {
                 let mut id_generator = data.id_generator.lock().unwrap();

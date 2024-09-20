@@ -1,32 +1,16 @@
 use actix_web::web::{Data, Json};
 use apistos::api_operation;
-use log::error;
 
 use crate::dtos::{GroupResponseDto, MessageWithGroupResponseDto, UserResponseDto};
 use crate::errors::problem::Problem;
-use crate::{AppState, BearerAuth};
+use crate::{get_auth_user_from_cache, AppState, BearerAuth};
 
 #[api_operation(operation_id = "get_messages")]
 pub async fn get_messages(
         _: BearerAuth,
         data: Data<AppState>,
 ) -> Result<Json<Vec<MessageWithGroupResponseDto>>, Problem> {
-        let sub =
-                data.sub.lock()
-                        .map_err(|_| {
-                                error!("failed to retrieve sub from app data");
-                                Problem::InternalServerError("failed to retrieve sub from  app data".to_string())
-                        })?
-                        .clone()
-                        .ok_or_else(|| {
-                                error!("failed to retrieve sub from app data");
-                                Problem::InternalServerError("failed to retrieve sub from  app data".to_string())
-                        })?;
-
-        let auth_user = data.user_repository.find_by_sub(sub)?.ok_or_else(|| {
-                error!("failed to find auth user with sub");
-                Problem::InternalServerError("failed to find auth user with sub".to_string())
-        })?;
+        let auth_user = get_auth_user_from_cache(&data).await?;
 
         let messages = data.message_repositoy.find_by_user_id(auth_user.id)?;
 

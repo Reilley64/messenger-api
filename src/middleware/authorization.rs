@@ -3,15 +3,15 @@ use std::env;
 use std::rc::Rc;
 use std::str::FromStr;
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime};
 
 use actix_web::dev::{forward_ready, Service, ServiceRequest, ServiceResponse, Transform};
-use actix_web::{web, Error, HttpMessage};
+use actix_web::{web, Error};
 use futures_util::future::{ok, LocalBoxFuture, Ready};
 use futures_util::FutureExt;
 use jsonwebtoken::{decode, decode_header, Algorithm, DecodingKey, TokenData, Validation};
 use lazy_static::lazy_static;
-use log::error;
+use log::{error, info};
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -30,81 +30,108 @@ struct JwkKey {
         r#use: String,
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 struct Claims {
         sub: String,
         exp: usize,
 }
 
-struct CachedJwks {
-        keys: Vec<JwkKey>,
-        last_updated: Instant,
-}
-
 struct CachedTokenData {
-        data: TokenData<Value>,
+        data: TokenData<Claims>,
         expires_at: Instant,
 }
 
 lazy_static! {
-        static ref JWKS_CACHE: Arc<RwLock<Option<CachedJwks>>> = Arc::new(RwLock::new(None));
+        static ref JWKS_CACHE: Arc<RwLock<HashMap<String, JwkKey>>> = Arc::new(RwLock::new(HashMap::new()));
         static ref TOKEN_CACHE: Arc<RwLock<HashMap<String, CachedTokenData>>> = Arc::new(RwLock::new(HashMap::new()));
 }
 
-const JWKS_CACHE_DURATION: Duration = Duration::from_secs(3600);
-const TOKEN_CACHE_DURATION: Duration = Duration::from_secs(300);
-
 async fn fetch_jwks(jwks_url: &str) -> Result<Vec<JwkKey>, Box<dyn std::error::Error>> {
+        info!("fetching jwks");
         let client = Client::new();
         let response = client.get(jwks_url).send().await?.json::<Value>().await?;
         let keys = serde_json::from_value(response["keys"].clone())?;
         Ok(keys)
 }
 
-async fn get_cached_jwks() -> Result<Vec<JwkKey>, Box<dyn std::error::Error>> {
-        let mut cache = JWKS_CACHE.write().await;
+async fn refresh_jwks_cache() -> Result<(), Box<dyn std::error::Error>> {
+        let aws_region = env::var("AWS_REGION").expect("AWS_REGION must be set");
+        let aws_cognito_user_pool_id =
+                env::var("AWS_COGNITO_USER_POOL_ID").expect("AWS_COGNITO_USER_POOL_ID must be set");
 
-        match &*cache {
-                Some(cached_jwks) if cached_jwks.last_updated.elapsed() < JWKS_CACHE_DURATION => {
-                        Ok(cached_jwks.keys.clone())
-                }
-                _ => {
-                        let aws_region = env::var("AWS_REGION").expect("AWS_REGION must be set");
-                        let aws_cognito_user_pool_id =
-                                env::var("AWS_COGNITO_USER_POOL_ID").expect("AWS_COGNITO_USER_POOL_ID must be set");
-                        let jwks_url = format!(
-                                "https://cognito-idp.{}.amazonaws.com/{}/.well-known/jwks.json",
-                                aws_region, aws_cognito_user_pool_id,
-                        );
-                        let jwks = fetch_jwks(jwks_url.as_str()).await?;
-                        *cache = Some(CachedJwks {
-                                keys: jwks.clone(),
-                                last_updated: Instant::now(),
-                        });
-                        Ok(jwks)
-                }
+        let jwks_url = format!(
+                "https://cognito-idp.{}.amazonaws.com/{}/.well-known/jwks.json",
+                aws_region, aws_cognito_user_pool_id,
+        );
+        let jwks = fetch_jwks(&jwks_url).await?;
+
+        let mut cache = JWKS_CACHE.write().await;
+        cache.clear();
+        for jwk in jwks {
+                cache.insert(jwk.kid.clone(), jwk);
         }
+        Ok(())
 }
 
-async fn get_cached_token_data(token: &str, jwks: &[JwkKey]) -> Result<TokenData<Value>, jsonwebtoken::errors::Error> {
-        let mut cache = TOKEN_CACHE.write().await;
+async fn get_jwk(kid: &str) -> Result<JwkKey, Box<dyn std::error::Error>> {
+        let cache = JWKS_CACHE.read().await;
+        if let Some(jwk) = cache.get(kid) {
+                return Ok(jwk.clone());
+        }
+        drop(cache);
 
+        refresh_jwks_cache().await?;
+
+        let cache = JWKS_CACHE.read().await;
+        cache.get(kid).cloned().ok_or_else(|| "JWK not found".into())
+}
+
+async fn decode_token(token: &str) -> Result<TokenData<Claims>, jsonwebtoken::errors::Error> {
+        let aws_region = env::var("AWS_REGION").expect("AWS_REGION must be set");
+        let aws_cognito_user_pool_id =
+                env::var("AWS_COGNITO_USER_POOL_ID").expect("AWS_COGNITO_USER_POOL_ID must be set");
+
+        let header = decode_header(token)?;
+        let kid = header.kid.ok_or(jsonwebtoken::errors::ErrorKind::InvalidToken)?;
+
+        let jwk = get_jwk(&kid)
+                .await
+                .map_err(|_| jsonwebtoken::errors::ErrorKind::InvalidKeyFormat)?;
+
+        let decoding_key = DecodingKey::from_rsa_components(&jwk.n, &jwk.e)?;
+        let mut validation = Validation::new(Algorithm::from_str(&jwk.alg)?);
+        validation.set_issuer(&[format!(
+                "https://cognito-idp.{}.amazonaws.com/{}",
+                aws_region, aws_cognito_user_pool_id
+        )]);
+
+        decode::<Claims>(token, &decoding_key, &validation)
+}
+
+async fn get_cached_token_data(token: &str) -> Result<TokenData<Claims>, jsonwebtoken::errors::Error> {
+        let cache = TOKEN_CACHE.read().await;
         if let Some(cached_data) = cache.get(token) {
                 if Instant::now() < cached_data.expires_at {
                         return Ok(cached_data.data.clone());
                 }
         }
+        drop(cache);
 
-        let token_data = decode_token(token, jwks)?;
+        let token_data = decode_token(token).await?;
+        let expires_at = SystemTime::UNIX_EPOCH + Duration::from_secs(token_data.claims.exp as u64);
+        let expires_at = Instant::now()
+                + expires_at
+                        .duration_since(SystemTime::now())
+                        .unwrap_or(Duration::from_secs(0));
 
+        let mut cache = TOKEN_CACHE.write().await;
         cache.insert(
                 token.to_string(),
                 CachedTokenData {
                         data: token_data.clone(),
-                        expires_at: Instant::now() + TOKEN_CACHE_DURATION,
+                        expires_at,
                 },
         );
-
         Ok(token_data)
 }
 
@@ -163,44 +190,18 @@ where
 
                         let token = &bearer_token[7..];
 
-                        let jwks = get_cached_jwks().await.map_err(|err| {
-                                error!("failed to retrieve JWKs: {}", err.to_string());
-                                Problem::InternalServerError("failed to retrieve JWKs".to_string())
-                        })?;
-
-                        let token_data = get_cached_token_data(token, &jwks).await.map_err(|err| {
+                        let token_data = get_cached_token_data(token).await.map_err(|err| {
                                 error!("invalid token: {} {}", token, err.to_string());
-                                Problem::Unauthorized("invalid token".to_string())
-                        })?;
-
-                        let claims: Claims = serde_json::from_value(token_data.claims.clone()).map_err(|err| {
-                                error!("invalid claims for token: {} {}", token, err.to_string());
-                                Problem::Unauthorized("invalid claims".to_string())
+                                Problem::Unauthorized("Invalid token".to_string())
                         })?;
 
                         {
                                 let mut sub = app_data.sub.lock().unwrap();
-                                *sub = Some(claims.sub.clone());
+                                *sub = Some(token_data.claims.sub.clone());
                         }
 
-                        req.extensions_mut().insert(token_data.claims);
                         svc.call(req).await
                 }
                 .boxed_local()
         }
-}
-
-fn decode_token(token: &str, jwks: &[JwkKey]) -> Result<TokenData<Value>, jsonwebtoken::errors::Error> {
-        let header = decode_header(token)?;
-        let kid = header.kid.ok_or(jsonwebtoken::errors::ErrorKind::InvalidToken)?;
-
-        let jwk = jwks
-                .iter()
-                .find(|jwk| jwk.kid == kid)
-                .ok_or(jsonwebtoken::errors::ErrorKind::InvalidKeyFormat)?;
-
-        let decoding_key = DecodingKey::from_rsa_components(&jwk.n, &jwk.e)?;
-        let validation = Validation::new(Algorithm::from_str(&jwk.alg)?);
-
-        decode::<Value>(token, &decoding_key, &validation)
 }

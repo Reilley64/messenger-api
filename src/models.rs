@@ -2,7 +2,7 @@ use crate::schema;
 use diesel::prelude::*;
 use std::collections::HashMap;
 
-#[derive(Queryable, Selectable, Insertable, AsChangeset, Clone)]
+#[derive(Queryable, Selectable, Insertable, AsChangeset, Debug, Clone)]
 #[diesel(table_name = schema::users)]
 #[diesel(check_for_backend(diesel::pg::Pg))]
 pub struct User {
@@ -52,7 +52,7 @@ impl From<(MessageRequest, User, User)> for MessageRequestWithRelationships {
         }
 }
 
-#[derive(Queryable, Selectable, Insertable, AsChangeset, Debug, Clone)]
+#[derive(Queryable, Identifiable, Selectable, Insertable, AsChangeset, Debug, Clone)]
 #[diesel(table_name = schema::groups)]
 #[diesel(check_for_backend(diesel::pg::Pg))]
 pub struct Group {
@@ -63,7 +63,7 @@ pub struct Group {
         pub message_request_id: Option<i64>,
 }
 
-#[derive(Queryable, Selectable, Insertable, AsChangeset, Debug, Clone)]
+#[derive(Queryable, Identifiable, Selectable, Insertable, Associations, AsChangeset, Debug, Clone)]
 #[diesel(belongs_to(Group))]
 #[diesel(table_name = schema::group_users)]
 #[diesel(check_for_backend(diesel::pg::Pg))]
@@ -86,6 +86,7 @@ pub struct GroupWithRelationships {
         pub users: Vec<GroupUserWithRelationships>,
 }
 
+#[derive(Debug, Clone)]
 pub struct GroupUserWithRelationships {
         pub id: i64,
         pub created_at: chrono::NaiveDateTime,
@@ -134,7 +135,7 @@ pub struct Message {
         pub idempotency_key: Option<String>,
 }
 
-#[derive(Queryable, Identifiable, Selectable, Insertable, Associations, AsChangeset, Debug, PartialEq)]
+#[derive(Queryable, Identifiable, Selectable, Insertable, Associations, AsChangeset, Debug, Clone)]
 #[diesel(belongs_to(Message))]
 #[diesel(primary_key(message_id, user_id))]
 #[diesel(table_name = schema::message_content)]

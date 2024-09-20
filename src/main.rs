@@ -22,8 +22,10 @@ use messenger_api::repositories::message_request_repository::MessageRequestRepos
 use messenger_api::repositories::user_repository::UserRepository;
 use messenger_api::AppState;
 use snowflake::SnowflakeIdGenerator;
+use std::collections::HashMap;
 use std::env;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
+use tokio::sync::RwLock;
 
 const MIGRATIONS: EmbeddedMigrations = embed_migrations!();
 
@@ -50,6 +52,7 @@ async fn main() -> std::io::Result<()> {
                 user_repository: UserRepository::new(pool.clone()),
 
                 sub: Mutex::new(None),
+                auth_user_cache: Arc::new(RwLock::new(HashMap::new())),
         });
 
         let host = env::var("SERVER_HOST").unwrap_or("127.0.0.1".to_string());
