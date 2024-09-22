@@ -6,7 +6,7 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-axum = "0.7.6"
+axum = { version = "0.7.6", features = ["tracing"] }
 aws-config = { version = "1.5", features = ["behavior-version-latest"] }
 aws-sdk-cognitoidentityprovider = "1.50"
 base64 = "0.22"
@@ -18,16 +18,12 @@ dotenvy = "0.15"
 hyper = "1.4.1"
 jsonwebtoken = "9.3"
 lazy_static = "1.5"
-num-bigint = "0.4"
 reqwest = { version = "0.12", features = ["json"] }
 rspc = "0.2.0"
 rspc-axum = "0.1.1"
 rs-snowflake = "0.6"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
-schemars = { package = "apistos-schemars", version = "0.8", features = [
-        "chrono",
-] }
 specta = { version = "1.0.5", features = ["chrono"] }
 tokio = { version = "1.40", features = ["full"] }
 tower = "0.5.1"
