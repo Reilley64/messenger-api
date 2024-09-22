@@ -202,7 +202,7 @@ async fn main() {
                 .arced();
 
         let app = axum::Router::new()
-                .route("/", get(|| async { Json(json!({ "status": "up" })) }))
+                .route("/health", get(|| async { Json(json!({ "status": "up" })) }))
                 .nest(
                         "/rspc",
                         rspc_axum::endpoint(router, move |headers: HeaderMap| AppContext {
