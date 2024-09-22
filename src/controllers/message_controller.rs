@@ -1,18 +1,14 @@
-use actix_web::web::{Data, Json};
-use apistos::api_operation;
+use rspc::Error;
 
-use crate::dtos::{GroupResponseDto, MessageWithGroupResponseDto, UserResponseDto};
-use crate::errors::problem::Problem;
-use crate::{get_auth_user_from_cache, AppState, BearerAuth};
+use crate::{
+        dtos::{GroupResponseDto, MessageWithGroupResponseDto, UserResponseDto},
+        AppContext,
+};
 
-#[api_operation(operation_id = "get_messages")]
-pub async fn get_messages(
-        _: BearerAuth,
-        data: Data<AppState>,
-) -> Result<Json<Vec<MessageWithGroupResponseDto>>, Problem> {
-        let auth_user = get_auth_user_from_cache(&data).await?;
+pub async fn get_messages(ctx: AppContext) -> Result<Vec<MessageWithGroupResponseDto>, Error> {
+        let auth_user = ctx.get_auth_user().await?;
 
-        let messages = data.message_repositoy.find_by_user_id(auth_user.id)?;
+        let messages = ctx.message_repository.find_by_user_id(auth_user.id)?;
 
         let message_responses = messages
                 .into_iter()
@@ -27,5 +23,5 @@ pub async fn get_messages(
                 })
                 .collect::<Vec<MessageWithGroupResponseDto>>();
 
-        Ok(Json(message_responses))
+        Ok(message_responses)
 }

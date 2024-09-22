@@ -1,8 +1,8 @@
 use diesel::alias;
 use diesel::prelude::*;
 use diesel::r2d2::{self, ConnectionManager};
+use rspc::{Error, ErrorCode};
 
-use crate::errors::problem::Problem;
 use crate::models::{MessageRequest, MessageRequestWithRelationships, User};
 use crate::schema::message_requests;
 use crate::schema::users;
@@ -21,11 +21,10 @@ impl MessageRequestRepository {
                 &self,
                 message_request_id: i64,
                 destination_id: i64,
-        ) -> Result<Option<MessageRequestWithRelationships>, Problem> {
-                let mut connection = self
-                        .pool
-                        .get()
-                        .map_err(|_| Problem::InternalServerError("failed to pool connection".to_string()))?;
+        ) -> Result<Option<MessageRequestWithRelationships>, Error> {
+                let mut connection = self.pool.get().map_err(|_| {
+                        Error::new(ErrorCode::InternalServerError, "Failed to pool connection".to_string())
+                })?;
 
                 let destination_users = alias!(users as destination_users);
 
@@ -45,7 +44,9 @@ impl MessageRequestRepository {
                         ))
                         .first::<(MessageRequest, User, User)>(&mut connection)
                         .optional()
-                        .map_err(|_| Problem::InternalServerError("failed to query database".to_string()))?;
+                        .map_err(|_| {
+                                Error::new(ErrorCode::InternalServerError, "Failed to query database".to_string())
+                        })?;
 
                 response.map_or(Ok(None), |(message_request, source, destination)| {
                         Ok(Some(MessageRequestWithRelationships::from((
@@ -60,11 +61,10 @@ impl MessageRequestRepository {
                 &self,
                 source_id: i64,
                 destination_id: i64,
-        ) -> Result<bool, Problem> {
-                let mut connection = self
-                        .pool
-                        .get()
-                        .map_err(|_| Problem::InternalServerError("failed to pool connection".to_string()))?;
+        ) -> Result<bool, Error> {
+                let mut connection = self.pool.get().map_err(|_| {
+                        Error::new(ErrorCode::InternalServerError, "Failed to pool connection".to_string())
+                })?;
 
                 diesel::select(diesel::dsl::exists(
                         message_requests::table.filter(message_requests::source_id
@@ -72,13 +72,13 @@ impl MessageRequestRepository {
                                 .and(message_requests::destination_id.eq(destination_id))),
                 ))
                 .get_result(&mut connection)
-                .map_err(|_| Problem::InternalServerError("failed to query database".to_string()))
+                .map_err(|_| Error::new(ErrorCode::InternalServerError, "Failed to query database".to_string()))
         }
 
         pub fn save(
                 &self,
                 message_request_with_relationships: MessageRequestWithRelationships,
-        ) -> Result<MessageRequestWithRelationships, Problem> {
+        ) -> Result<MessageRequestWithRelationships, Error> {
                 let message_request = MessageRequest {
                         id: message_request_with_relationships.id,
                         created_at: message_request_with_relationships.created_at,
@@ -88,10 +88,9 @@ impl MessageRequestRepository {
                         approved_at: message_request_with_relationships.approved_at,
                 };
 
-                let mut connection = self
-                        .pool
-                        .get()
-                        .map_err(|_| Problem::InternalServerError("failed to pool connection".to_string()))?;
+                let mut connection = self.pool.get().map_err(|_| {
+                        Error::new(ErrorCode::InternalServerError, "Failed to pool connection".to_string())
+                })?;
 
                 let message_request = diesel::insert_into(message_requests::table)
                         .values(&message_request)
@@ -100,17 +99,26 @@ impl MessageRequestRepository {
                         .set(&message_request)
                         .get_result::<MessageRequest>(&mut connection)
                         .optional()
-                        .map_err(|_| Problem::InternalServerError("failed to query database".to_string()))?
-                        .ok_or(Problem::InternalServerError("failed to query database".to_string()))?;
+                        .map_err(|_| {
+                                Error::new(ErrorCode::InternalServerError, "Failed to query database".to_string())
+                        })?
+                        .ok_or(Error::new(
+                                ErrorCode::InternalServerError,
+                                "Failed to query database".to_string(),
+                        ))?;
 
                 let source = users::table
                         .find(message_request.source_id)
                         .first(&mut connection)
-                        .map_err(|_| Problem::InternalServerError("failed to query database".to_string()))?;
+                        .map_err(|_| {
+                                Error::new(ErrorCode::InternalServerError, "Failed to query database".to_string())
+                        })?;
                 let destination = users::table
                         .find(message_request.destination_id)
                         .first(&mut connection)
-                        .map_err(|_| Problem::InternalServerError("failed to query database".to_string()))?;
+                        .map_err(|_| {
+                                Error::new(ErrorCode::InternalServerError, "Failed to query database".to_string())
+                        })?;
 
                 Ok(MessageRequestWithRelationships::from((
                         message_request,

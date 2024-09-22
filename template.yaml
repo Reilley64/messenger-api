@@ -9,9 +9,9 @@ Parameters:
   DatabaseUsername:
     Type: String
     Default: "messenger"
-    NoEcho: true
   DatabasePassword:
-    Type: String
+    Type: AWS::SSM::Parameter::Value<String>
+    Default: "/Prod/Messenger/Postgres/Password"
     NoEcho: true
   HostedZoneName:
     Type: String
@@ -251,7 +251,7 @@ Resources:
     Properties:
       ContainerDefinitions:
         - Name: Messenger
-          Image: !Sub "${ECRRepository.RepositoryUri}@sha256:3680c48fc603a53f5318b48da8771beb6a39e167d45a6ab229562794b4ce4843"
+          Image: !Sub "${ECRRepository.RepositoryUri}@sha256:74c19343027d8f60fc98c5a95ad3958ee6ca77a6fb3e60a967eb94ba82f785bc"
           Environment:
             - Name: "SERVER_HOST"
               Value: "0.0.0.0"
@@ -261,15 +261,15 @@ Resources:
               Value: !Ref UserPool
             - Name: "DATABASE_URL"
               Value: !Sub "postgresql://${DatabaseUsername}:${DatabasePassword}@${Database.Endpoint.Address}/postgres"
-          PortMappings:
-            - ContainerPort: 80
-              Protocol: tcp
           LogConfiguration:
             LogDriver: awslogs
             Options:
               awslogs-group: !Ref LogGroupName
               awslogs-region: !Ref AWS::Region
               awslogs-stream-prefix: "ecs"
+          PortMappings:
+            - ContainerPort: 80
+              Protocol: tcp
       Cpu: "256"
       ExecutionRoleArn: !Ref ECSTaskExecutionRole
       Memory: "512"
@@ -287,7 +287,7 @@ Resources:
       Cluster: !Ref ECSCluster
       LaunchType: FARGATE
       LoadBalancers:
-        - ContainerName: Messenger
+        - ContainerName: "Messenger"
           ContainerPort: 80
           TargetGroupArn: !Ref ALBTargetGroup
       NetworkConfiguration:

@@ -1,24 +1,16 @@
 use std::collections::HashMap;
 use std::env;
-use std::rc::Rc;
 use std::str::FromStr;
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime};
 
-use actix_web::dev::{forward_ready, Service, ServiceRequest, ServiceResponse, Transform};
-use actix_web::{web, Error};
-use futures_util::future::{ok, LocalBoxFuture, Ready};
-use futures_util::FutureExt;
 use jsonwebtoken::{decode, decode_header, Algorithm, DecodingKey, TokenData, Validation};
 use lazy_static::lazy_static;
-use log::{error, info};
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tokio::sync::RwLock;
-
-use crate::errors::problem::Problem;
-use crate::AppState;
+use tracing::{debug, error, info};
 
 #[derive(Deserialize, Debug, Clone)]
 struct JwkKey {
@@ -31,8 +23,8 @@ struct JwkKey {
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
-struct Claims {
-        sub: String,
+pub struct Claims {
+        pub sub: String,
         exp: usize,
 }
 
@@ -47,10 +39,54 @@ lazy_static! {
 }
 
 async fn fetch_jwks(jwks_url: &str) -> Result<Vec<JwkKey>, Box<dyn std::error::Error>> {
-        info!("fetching jwks");
+        info!("Starting to fetch JWKS from URL: {}", jwks_url);
+
         let client = Client::new();
-        let response = client.get(jwks_url).send().await?.json::<Value>().await?;
-        let keys = serde_json::from_value(response["keys"].clone())?;
+
+        debug!("Sending GET request to JWKS URL");
+        let response = match client.get(jwks_url).send().await {
+                Ok(resp) => {
+                        info!("Received response from JWKS URL");
+                        resp
+                }
+                Err(e) => {
+                        error!("Failed to send request to JWKS URL: {}", e);
+                        return Err(Box::new(e));
+                }
+        };
+
+        debug!("Attempting to parse response as JSON");
+        let json_value: Value = match response.json().await {
+                Ok(json) => {
+                        info!("Successfully parsed response as JSON");
+                        json
+                }
+                Err(e) => {
+                        error!("Failed to parse response as JSON: {}", e);
+                        return Err(Box::new(e));
+                }
+        };
+
+        debug!("Extracting 'keys' from JSON response");
+        let keys_value = json_value.get("keys").ok_or_else(|| {
+                let err = "'keys' field not found in JWKS response";
+                error!("{}", err);
+                std::io::Error::new(std::io::ErrorKind::InvalidData, err)
+        })?;
+
+        debug!("Deserializing 'keys' into Vec<JwkKey>");
+        let keys = match serde_json::from_value::<Vec<JwkKey>>(keys_value.clone()) {
+                Ok(k) => {
+                        info!("Successfully deserialized {} keys", k.len());
+                        k
+                }
+                Err(e) => {
+                        error!("Failed to deserialize 'keys': {}", e);
+                        return Err(Box::new(e));
+                }
+        };
+
+        info!("Successfully fetched and parsed JWKS");
         Ok(keys)
 }
 
@@ -108,7 +144,7 @@ async fn decode_token(token: &str) -> Result<TokenData<Claims>, jsonwebtoken::er
         decode::<Claims>(token, &decoding_key, &validation)
 }
 
-async fn get_cached_token_data(token: &str) -> Result<TokenData<Claims>, jsonwebtoken::errors::Error> {
+pub async fn get_cached_token_data(token: &str) -> Result<TokenData<Claims>, jsonwebtoken::errors::Error> {
         let cache = TOKEN_CACHE.read().await;
         if let Some(cached_data) = cache.get(token) {
                 if Instant::now() < cached_data.expires_at {
@@ -133,75 +169,4 @@ async fn get_cached_token_data(token: &str) -> Result<TokenData<Claims>, jsonweb
                 },
         );
         Ok(token_data)
-}
-
-pub struct AuthMiddleware;
-
-impl<S, B> Transform<S, ServiceRequest> for AuthMiddleware
-where
-        S: Service<ServiceRequest, Response = ServiceResponse<B>, Error = Error> + 'static,
-        S::Future: 'static,
-{
-        type Response = ServiceResponse<B>;
-        type Error = Error;
-        type Transform = AuthMiddlewareMiddleware<S>;
-        type InitError = ();
-        type Future = Ready<Result<Self::Transform, Self::InitError>>;
-
-        fn new_transform(&self, service: S) -> Self::Future {
-                ok(AuthMiddlewareMiddleware {
-                        service: Rc::new(service),
-                })
-        }
-}
-
-pub struct AuthMiddlewareMiddleware<S> {
-        service: Rc<S>,
-}
-
-impl<S, B> Service<ServiceRequest> for AuthMiddlewareMiddleware<S>
-where
-        S: Service<ServiceRequest, Response = ServiceResponse<B>, Error = Error> + 'static,
-        S::Future: 'static,
-{
-        type Response = ServiceResponse<B>;
-        type Error = Error;
-        type Future = LocalBoxFuture<'static, Result<Self::Response, Self::Error>>;
-
-        forward_ready!(service);
-
-        fn call(&self, req: ServiceRequest) -> Self::Future {
-                let svc = Rc::clone(&self.service);
-                let app_data = req.app_data::<web::Data<AppState>>().unwrap().clone();
-
-                async move {
-                        let authorization = req
-                                .headers()
-                                .get("Authorization")
-                                .ok_or(Problem::Unauthorized("Missing authorization header".to_string()))?;
-
-                        let bearer_token = authorization
-                                .to_str()
-                                .map_err(|_| Problem::Unauthorized("Invalid authorization header".to_string()))?;
-
-                        if !bearer_token.starts_with("Bearer ") {
-                                return Err(Error::from(Problem::Unauthorized("Invalid bearer token".to_string())));
-                        }
-
-                        let token = &bearer_token[7..];
-
-                        let token_data = get_cached_token_data(token).await.map_err(|err| {
-                                error!("invalid token: {} {}", token, err.to_string());
-                                Problem::Unauthorized("Invalid token".to_string())
-                        })?;
-
-                        {
-                                let mut sub = app_data.sub.lock().unwrap();
-                                *sub = Some(token_data.claims.sub.clone());
-                        }
-
-                        svc.call(req).await
-                }
-                .boxed_local()
-        }
 }

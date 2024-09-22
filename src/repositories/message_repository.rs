@@ -2,13 +2,15 @@ use std::collections::HashMap;
 
 use diesel::prelude::*;
 use diesel::r2d2::{self, ConnectionManager};
+use rspc::{Error, ErrorCode};
 
-use crate::errors::problem::Problem;
-use crate::models::{
-        Group, GroupUser, GroupUserWithRelationships, GroupWithRelationships, Message, MessageContent,
-        MessageWithGroup, MessageWithSource, User,
+use crate::{
+        models::{
+                Group, GroupUser, GroupUserWithRelationships, GroupWithRelationships, Message, MessageContent,
+                MessageWithGroup, MessageWithSource, User,
+        },
+        schema::{groups, message_content, messages, users},
 };
-use crate::schema::{groups, message_content, messages, users};
 
 #[derive(Debug, Clone)]
 pub struct MessageRepository {
@@ -20,27 +22,27 @@ impl MessageRepository {
                 Self { pool }
         }
 
-        pub fn find_by_group_id(&self, group_id: i64) -> Result<Vec<MessageWithSource>, Problem> {
+        pub fn find_by_group_id(&self, group_id: i64) -> Result<Vec<MessageWithSource>, Error> {
                 let mut connection = self
                         .pool
                         .get()
-                        .map_err(|_| Problem::InternalServerError("Failed to pool connection".to_string()))?;
+                        .map_err(|_| Error::new(ErrorCode::InternalServerError, "Failed to pool connection".into()))?;
 
                 let messages = messages::table
                         .filter(messages::group_id.eq(group_id))
                         .order_by(messages::id.desc())
                         .load::<Message>(&mut connection)
-                        .map_err(|_| Problem::InternalServerError("Failed to query database".to_string()))?;
+                        .map_err(|_| Error::new(ErrorCode::InternalServerError, "Failed to query database".into()))?;
 
                 let users = users::table
                         .filter(users::id.eq_any(messages.iter().map(|m| m.source_id)))
                         .load::<User>(&mut connection)
-                        .map_err(|_| Problem::InternalServerError("Failed to query database".to_string()))?;
+                        .map_err(|_| Error::new(ErrorCode::InternalServerError, "Failed to query database".into()))?;
                 let user_map: HashMap<i64, User> = users.into_iter().map(|u| (u.id, u)).collect();
 
                 let content = MessageContent::belonging_to(&messages)
                         .load::<MessageContent>(&mut connection)
-                        .map_err(|_| Problem::InternalServerError("Failed to query database".to_string()))?;
+                        .map_err(|_| Error::new(ErrorCode::InternalServerError, "Failed to query database".into()))?;
                 let content_map: HashMap<i64, Vec<MessageContent>> =
                         content.into_iter().fold(HashMap::new(), |mut acc, content_item| {
                                 acc.entry(content_item.message_id)
@@ -49,27 +51,28 @@ impl MessageRepository {
                                 acc
                         });
 
-                let message_with_relationships = messages
+                let messages_with_relationships = messages
                         .into_iter()
                         .map(|m| {
-                                let user = user_map
-                                        .get(&m.source_id)
-                                        .ok_or(Problem::InternalServerError("failed to query database".to_string()))?;
+                                let user = user_map.get(&m.source_id).ok_or(Error::new(
+                                        ErrorCode::InternalServerError,
+                                        "Failed to query database".into(),
+                                ))?;
                                 let content = content_map.get(&m.id).cloned().unwrap_or_default();
                                 let content_map: HashMap<i64, String> =
                                         content.into_iter().map(|mc| (mc.user_id, mc.content.clone())).collect();
                                 Ok(MessageWithSource::from((m, user.clone(), content_map)))
                         })
-                        .collect::<Result<Vec<MessageWithSource>, Problem>>()?;
+                        .collect::<Result<Vec<MessageWithSource>, Error>>()?;
 
-                Ok(message_with_relationships)
+                Ok(messages_with_relationships)
         }
 
-        pub fn find_by_user_id(&self, user_id: i64) -> Result<Vec<MessageWithGroup>, Problem> {
+        pub fn find_by_user_id(&self, user_id: i64) -> Result<Vec<MessageWithGroup>, Error> {
                 let mut connection = self
                         .pool
                         .get()
-                        .map_err(|_| Problem::InternalServerError("failed to pool connection".to_string()))?;
+                        .map_err(|_| Error::new(ErrorCode::InternalServerError, "Failed to pool connection".into()))?;
 
                 let messages = message_content::table
                         .inner_join(messages::table.on(messages::id.eq(message_content::message_id)))
@@ -79,22 +82,22 @@ impl MessageRepository {
                         .order_by((messages::group_id, message_content::message_id.desc()))
                         .select((messages::all_columns, users::all_columns, message_content::all_columns))
                         .load::<(Message, User, MessageContent)>(&mut connection)
-                        .map_err(|_| Problem::InternalServerError("failed to query database".to_string()))?;
+                        .map_err(|_| Error::new(ErrorCode::InternalServerError, "Failed to query database".into()))?;
 
                 let groups = groups::table
                         .filter(groups::id.eq_any(&messages.iter().map(|(m, _, _)| m.group_id).collect::<Vec<i64>>()))
                         .load::<Group>(&mut connection)
-                        .map_err(|_| Problem::InternalServerError("Failed to query database".to_string()))?;
+                        .map_err(|_| Error::new(ErrorCode::InternalServerError, "Failed to query database".into()))?;
                 let group_map: HashMap<i64, Group> = groups.iter().map(|g| (g.id, g.clone())).collect();
 
                 let group_users = GroupUser::belonging_to(&groups)
                         .load::<GroupUser>(&mut connection)
-                        .map_err(|_| Problem::InternalServerError("Failed to query database".to_string()))?;
+                        .map_err(|_| Error::new(ErrorCode::InternalServerError, "Failed to query database".into()))?;
 
                 let users = users::table
                         .filter(users::id.eq_any(&group_users.iter().map(|gu| gu.user_id).collect::<Vec<i64>>()))
                         .load::<User>(&mut connection)
-                        .map_err(|_| Problem::InternalServerError("Failed to query database".to_string()))?;
+                        .map_err(|_| Error::new(ErrorCode::InternalServerError, "Failed to query database".into()))?;
                 let user_map: HashMap<i64, User> = users.iter().map(|u| (u.id, u.clone())).collect();
 
                 let group_users_with_relationships_map: HashMap<i64, Vec<GroupUserWithRelationships>> = group_users
@@ -127,7 +130,7 @@ impl MessageRepository {
                 Ok(messages_with_group)
         }
 
-        pub fn save(&self, messages_with_source: MessageWithSource) -> Result<MessageWithSource, Problem> {
+        pub fn save(&self, messages_with_source: MessageWithSource) -> Result<MessageWithSource, Error> {
                 let message = Message {
                         id: messages_with_source.id,
                         created_at: messages_with_source.created_at,
@@ -140,7 +143,7 @@ impl MessageRepository {
                 let mut connection = self
                         .pool
                         .get()
-                        .map_err(|_| Problem::InternalServerError("failed to pool connection".to_string()))?;
+                        .map_err(|_| Error::new(ErrorCode::InternalServerError, "failed to pool connection".into()))?;
 
                 let message = diesel::insert_into(messages::table)
                         .values(&message)
@@ -149,8 +152,11 @@ impl MessageRepository {
                         .set(&message)
                         .get_result::<Message>(&mut connection)
                         .optional()
-                        .map_err(|_| Problem::InternalServerError("failed to query database".to_string()))?
-                        .ok_or(Problem::InternalServerError("failed to query database".to_string()))?;
+                        .map_err(|_| Error::new(ErrorCode::InternalServerError, "Failed to query database".into()))?
+                        .ok_or(Error::new(
+                                ErrorCode::InternalServerError,
+                                "failed to query database".into(),
+                        ))?;
 
                 for (user_id, content) in &messages_with_source.content {
                         let message_content = MessageContent {
@@ -165,13 +171,15 @@ impl MessageRepository {
                                 .do_update()
                                 .set(&message_content)
                                 .execute(&mut connection)
-                                .map_err(|_| Problem::InternalServerError("failed to query database".to_string()))?;
+                                .map_err(|_| {
+                                        Error::new(ErrorCode::InternalServerError, "Failed to query database".into())
+                                })?;
                 }
 
                 let source = users::table
                         .find(message.source_id)
                         .first(&mut connection)
-                        .map_err(|_| Problem::InternalServerError("failed to query database".to_string()))?;
+                        .map_err(|_| Error::new(ErrorCode::InternalServerError, "failed to query database".into()))?;
 
                 Ok(MessageWithSource::from((message, source, messages_with_source.content)))
         }

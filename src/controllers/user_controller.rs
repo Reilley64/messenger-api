@@ -1,75 +1,67 @@
-use actix_web::web::{Data, Json, Path};
-use apistos::api_operation;
-use aws_sdk_cognitoidentityprovider::Client;
-use chrono::Utc;
-use log::error;
 use std::env;
 
+use aws_sdk_cognitoidentityprovider::Client;
+use chrono::Utc;
+use rspc::{Error, ErrorCode};
+use tracing::error;
+
 use crate::dtos::{UserRequestDto, UserResponseDto};
-use crate::errors::problem::Problem;
 use crate::models::User;
-use crate::{AppState, BearerAuth};
+use crate::AppContext;
 
-#[api_operation(operation_id = "get_user")]
-pub async fn get_user(
-        _: BearerAuth,
-        data: Data<AppState>,
-        path: Path<(String,)>,
-) -> Result<Json<UserResponseDto>, Problem> {
-        let user_id = path
-                .into_inner()
-                .0
-                .parse::<i64>()
-                .map_err(|_| Problem::BadRequest("Invalid user_id".to_string()))?;
+pub async fn get_user(ctx: AppContext, user_id: String) -> Result<UserResponseDto, Error> {
+        let user_id: i64 = user_id
+                .parse()
+                .map_err(|_| Error::new(ErrorCode::BadRequest, "Invalid user_id".into()))?;
 
-        let user = data
+        let user = ctx
                 .user_repository
                 .find_by_id(user_id)?
-                .ok_or(Problem::NotFound("User not found".to_string()))?;
+                .ok_or(Error::new(ErrorCode::NotFound, "User not found".into()))?;
 
-        Ok(Json(UserResponseDto::from(user)))
+        let user_response = UserResponseDto::from(user);
+
+        Ok(user_response)
 }
 
-#[api_operation(operation_id = "create_user")]
-pub async fn create_user(
-        _: BearerAuth,
-        data: Data<AppState>,
-        body: Json<UserRequestDto>,
-) -> Result<Json<UserResponseDto>, Problem> {
+pub async fn create_user(ctx: AppContext, user_request: UserRequestDto) -> Result<UserResponseDto, Error> {
         let sub =
-                data.sub.lock()
+                ctx.sub.lock()
                         .map_err(|_| {
                                 error!("failed to retrieve sub from app data");
-                                Problem::InternalServerError("failed to retrieve sub from  app data".to_string())
+                                Error::new(
+                                        ErrorCode::InternalServerError,
+                                        "Failed to retrieve sub from app data".into(),
+                                )
                         })?
                         .clone()
                         .ok_or_else(|| {
                                 error!("failed to retrieve sub from app data");
-                                Problem::InternalServerError("failed to retrieve sub from  app data".to_string())
+                                Error::new(
+                                        ErrorCode::InternalServerError,
+                                        "Failed to retrieve sub from sapp data".into(),
+                                )
                         })?;
 
-        if data.user_repository.exists_by_sub(sub.clone().to_string())? {
-                return Err(Problem::Conflict("User already exists".to_string()));
+        if ctx.user_repository.exists_by_sub(sub.clone().to_string())? {
+                return Err(Error::new(ErrorCode::Conflict, "User already exists".into()));
         }
 
         let user_pool_id = env::var("AWS_COGNITO_USER_POOL_ID").expect("AWS_COGNITO_USER_POOL_ID must be set");
-
         let shared_config = aws_config::load_from_env().await;
         let client = Client::new(&shared_config);
-        let cognito_user = match client
+        let cognito_user = client
                 .admin_get_user()
                 .user_pool_id(user_pool_id)
                 .username(sub.clone())
                 .send()
                 .await
-        {
-                Ok(cognito_user) => cognito_user,
-                Err(_) => {
-                        return Err(Problem::InternalServerError(
-                                "failed to retrieve user from cognito".to_string(),
-                        ))
-                }
-        };
+                .map_err(|_| {
+                        Error::new(
+                                ErrorCode::InternalServerError,
+                                "Failed to retrieve user from cognito".into(),
+                        )
+                })?;
 
         let mut email = String::new();
         let mut phone_number = String::new();
@@ -87,8 +79,8 @@ pub async fn create_user(
         }
 
         let user = {
-                let mut id_generator = data.id_generator.lock().unwrap();
-                data.user_repository.save(User {
+                let mut id_generator = ctx.id_generator.lock().unwrap();
+                ctx.user_repository.save(User {
                         id: id_generator.generate(),
                         created_at: Utc::now().naive_utc(),
                         updated_at: Utc::now().naive_utc(),
@@ -98,9 +90,11 @@ pub async fn create_user(
                         first_name,
                         last_name,
                         display_name: None,
-                        public_key: body.public_key.clone(),
+                        public_key: user_request.public_key.clone(),
                 })?
         };
 
-        Ok(Json(UserResponseDto::from(user)))
+        let user_response = UserResponseDto::from(user);
+
+        Ok(user_response)
 }

@@ -56,6 +56,18 @@ diesel::table! {
 }
 
 diesel::table! {
+    user_push_subscriptions (id) {
+        id -> Int8,
+        created_at -> Timestamp,
+        updated_at -> Timestamp,
+        user_id -> Int8,
+        endpoint -> Text,
+        p256dh -> Text,
+        auth -> Text,
+    }
+}
+
+diesel::table! {
     users (id) {
         id -> Int8,
         created_at -> Timestamp,
@@ -82,6 +94,7 @@ diesel::joinable!(group_users -> users (user_id));
 diesel::joinable!(groups -> message_requests (message_request_id));
 diesel::joinable!(messages -> groups (group_id));
 diesel::joinable!(messages -> users (source_id));
+diesel::joinable!(user_push_subscriptions -> users (user_id));
 
 diesel::allow_tables_to_appear_in_same_query!(
     group_users,
@@ -89,5 +102,6 @@ diesel::allow_tables_to_appear_in_same_query!(
     message_content,
     message_requests,
     messages,
+    user_push_subscriptions,
     users,
 );

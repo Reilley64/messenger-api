@@ -1,8 +1,11 @@
-use crate::errors::problem::Problem;
-use crate::models::{Group, GroupUser, GroupUserWithRelationships, GroupWithRelationships, User};
-use crate::schema::{group_users, groups, users};
 use diesel::prelude::*;
 use diesel::r2d2::{self, ConnectionManager};
+use rspc::{Error, ErrorCode};
+
+use crate::{
+        models::{Group, GroupUser, GroupUserWithRelationships, GroupWithRelationships, User},
+        schema::{group_users, groups, users},
+};
 
 #[derive(Debug, Clone)]
 pub struct GroupRepository {
@@ -18,24 +21,26 @@ impl GroupRepository {
                 &self,
                 group_id: i64,
                 user_id: i64,
-        ) -> Result<Option<GroupWithRelationships>, Problem> {
+        ) -> Result<Option<GroupWithRelationships>, Error> {
                 let mut connection = self
                         .pool
                         .get()
-                        .map_err(|_| Problem::InternalServerError("failed to pool connection".to_string()))?;
+                        .map_err(|_| Error::new(ErrorCode::InternalServerError, "Failed to pool connection".into()))?;
 
                 let group = groups::table
                         .find(group_id)
                         .first::<Group>(&mut connection)
                         .optional()
-                        .map_err(|_| Problem::InternalServerError("failed to query database".to_string()))?;
+                        .map_err(|_| Error::new(ErrorCode::InternalServerError, "Failed to query database".into()))?;
 
                 group.map_or(Ok(None), |group| {
                         let group_users = group_users::table
                                 .filter(group_users::group_id.eq(group.id))
                                 .select(group_users::all_columns)
                                 .load::<GroupUser>(&mut connection)
-                                .map_err(|_| Problem::InternalServerError("failed to query database".to_string()))?;
+                                .map_err(|_| {
+                                        Error::new(ErrorCode::InternalServerError, "Failed to query database".into())
+                                })?;
 
                         if !group_users.iter().any(|gu: &GroupUser| gu.user_id == user_id) {
                                 return Ok(None);
@@ -49,19 +54,18 @@ impl GroupRepository {
                                                 .first::<User>(&mut connection)
                                                 .optional()
                                                 .map_err(|_| {
-                                                        Problem::InternalServerError(
-                                                                "failed to query database".to_string(),
+                                                        Error::new(
+                                                                ErrorCode::InternalServerError,
+                                                                "failed to query database".into(),
                                                         )
                                                 })?
-                                                .ok_or(Problem::InternalServerError(
-                                                        "failed to query database".to_string(),
+                                                .ok_or(Error::new(
+                                                        ErrorCode::InternalServerError,
+                                                        "failed to query database".into(),
                                                 ))?;
-                                        Ok::<GroupUserWithRelationships, Problem>(GroupUserWithRelationships::from((
-                                                gu.clone(),
-                                                user,
-                                        )))
+                                        Ok(GroupUserWithRelationships::from((gu.clone(), user)))
                                 })
-                                .collect::<Result<Vec<GroupUserWithRelationships>, Problem>>()?;
+                                .collect::<Result<Vec<GroupUserWithRelationships>, Error>>()?;
 
                         Ok(Some(GroupWithRelationships::from((
                                 group,
@@ -70,7 +74,7 @@ impl GroupRepository {
                 })
         }
 
-        pub fn save(&self, group_with_relationships: GroupWithRelationships) -> Result<Group, Problem> {
+        pub fn save(&self, group_with_relationships: GroupWithRelationships) -> Result<Group, Error> {
                 let group = Group {
                         id: group_with_relationships.id,
                         created_at: group_with_relationships.created_at,
@@ -82,7 +86,7 @@ impl GroupRepository {
                 let mut connection = self
                         .pool
                         .get()
-                        .map_err(|_| Problem::InternalServerError("failed to pool connection".to_string()))?;
+                        .map_err(|_| Error::new(ErrorCode::InternalServerError, "Failed to pool connection".into()))?;
 
                 let group = diesel::insert_into(groups::table)
                         .values(&group)
@@ -91,8 +95,11 @@ impl GroupRepository {
                         .set(&group)
                         .get_result::<Group>(&mut connection)
                         .optional()
-                        .map_err(|_| Problem::InternalServerError("failed to query database".to_string()))?
-                        .ok_or(Problem::InternalServerError("failed to query database".to_string()))?;
+                        .map_err(|_| Error::new(ErrorCode::InternalServerError, "Failed to query database".into()))?
+                        .ok_or(Error::new(
+                                ErrorCode::InternalServerError,
+                                "Failed to query database".into(),
+                        ))?;
 
                 for gu in group_with_relationships.users.into_iter() {
                         let group_user = GroupUser {
@@ -111,8 +118,10 @@ impl GroupRepository {
                                 .do_update()
                                 .set(&group_user)
                                 .execute(&mut connection)
-                                .map_err(|_| Problem::InternalServerError("failed to query database".to_string()))?;
-                };
+                                .map_err(|_| {
+                                        Error::new(ErrorCode::InternalServerError, "Failed to query database".into())
+                                })?;
+                }
 
                 Ok(group)
         }

@@ -1,17 +1,16 @@
-use apistos::ApiComponent;
-use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use specta::Type;
 use std::collections::HashMap;
 
 use crate::models::{GroupWithRelationships, MessageRequestWithRelationships, User};
 
-#[derive(Clone, Deserialize, JsonSchema, ApiComponent, Debug)]
+#[derive(Type, Clone, Deserialize, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct UserRequestDto {
         pub public_key: String,
 }
 
-#[derive(Serialize, JsonSchema, ApiComponent, Debug)]
+#[derive(Type, Serialize, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct UserResponseDto {
         pub id: String,
@@ -35,13 +34,13 @@ impl From<User> for UserResponseDto {
         }
 }
 
-#[derive(Clone, Deserialize, JsonSchema, ApiComponent, Debug)]
+#[derive(Type, Deserialize, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct MessageRequestRequestDto {
         pub destination_id: String,
 }
 
-#[derive(Serialize, JsonSchema, ApiComponent, Debug)]
+#[derive(Type, Serialize, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct MessageRequestResponseDto {
         pub id: String,
@@ -65,14 +64,14 @@ impl From<MessageRequestWithRelationships> for MessageRequestResponseDto {
         }
 }
 
-#[derive(Serialize, JsonSchema, ApiComponent)]
+#[derive(Type, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct GroupResponseDto {
         pub id: String,
         pub created_at: chrono::NaiveDateTime,
         pub updated_at: chrono::NaiveDateTime,
         pub name: String,
-        pub message_request_id: Option<i64>,
+        pub message_request_id: Option<String>,
         pub users: Vec<UserResponseDto>,
 }
 
@@ -89,7 +88,9 @@ impl From<GroupWithRelationships> for GroupResponseDto {
                                         .collect::<Vec<String>>()
                                         .join(", ")
                         }),
-                        message_request_id: group.message_request_id,
+                        message_request_id: group
+                                .message_request_id
+                                .map_or(None, |message_request_id| Some(message_request_id.to_string())),
                         users: group
                                 .users
                                 .iter()
@@ -106,14 +107,14 @@ impl From<GroupWithRelationships> for GroupResponseDto {
         }
 }
 
-#[derive(Deserialize, JsonSchema, ApiComponent, Debug, Clone)]
+#[derive(Type, Deserialize, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct MessageRequestDto {
         pub content: HashMap<String, String>,
         pub idempotency_key: Option<String>,
 }
 
-#[derive(Serialize, JsonSchema, ApiComponent)]
+#[derive(Type, Serialize, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct MessageResponseDto {
         pub id: String,
@@ -124,7 +125,7 @@ pub struct MessageResponseDto {
         pub idempotency_key: Option<String>,
 }
 
-#[derive(Serialize, JsonSchema, ApiComponent)]
+#[derive(Type, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct MessageWithGroupResponseDto {
         pub id: String,
@@ -134,4 +135,24 @@ pub struct MessageWithGroupResponseDto {
         pub source: UserResponseDto,
         pub content: String,
         pub idempotency_key: Option<String>,
+}
+
+#[derive(Type, Deserialize, Debug, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct UserPushSubscriptionRequestDto {
+        pub endpoint: String,
+        pub p256dh: String,
+        pub auth: String,
+}
+
+#[derive(Type, Serialize, Debug, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct UserPushSubscriptionResponseDto {
+        pub id: String,
+        pub created_at: chrono::NaiveDateTime,
+        pub updated_at: chrono::NaiveDateTime,
+        pub user_id: String,
+        pub endpoint: String,
+        pub p256dh: String,
+        pub auth: String,
 }

@@ -2,7 +2,7 @@ use crate::schema;
 use diesel::prelude::*;
 use std::collections::HashMap;
 
-#[derive(Queryable, Selectable, Insertable, AsChangeset, Debug, Clone)]
+#[derive(Queryable, Identifiable, Selectable, Insertable, AsChangeset, Debug, Clone)]
 #[diesel(table_name = schema::users)]
 #[diesel(check_for_backend(diesel::pg::Pg))]
 pub struct User {
@@ -77,6 +77,7 @@ pub struct GroupUser {
         pub nickname: Option<String>,
 }
 
+#[derive(Debug, Clone)]
 pub struct GroupWithRelationships {
         pub id: i64,
         pub created_at: chrono::NaiveDateTime,
@@ -192,4 +193,18 @@ impl From<(Message, GroupWithRelationships, User, MessageContent)> for MessageWi
                         idempotency_key: message.idempotency_key,
                 }
         }
+}
+
+#[derive(Queryable, Identifiable, Selectable, Insertable, Associations, AsChangeset, Debug, Clone)]
+#[diesel(belongs_to(User))]
+#[diesel(table_name = schema::user_push_subscriptions)]
+#[diesel(check_for_backend(diesel::pg::Pg))]
+pub struct UserPushSubscription {
+        pub id: i64,
+        pub created_at: chrono::NaiveDateTime,
+        pub updated_at: chrono::NaiveDateTime,
+        pub user_id: i64,
+        pub endpoint: String,
+        pub p256dh: String,
+        pub auth: String,
 }
