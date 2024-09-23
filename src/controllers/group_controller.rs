@@ -8,7 +8,7 @@ use web_push::{
 
 use crate::{
         dtos::{GroupResponseDto, MessageRequestDto, MessageResponseDto, UserResponseDto},
-        models::{GroupWithRelationships, Message, MessageWithSource},
+        models::{GroupWithRelationships, MessageWithSource},
         AppContext,
 };
 

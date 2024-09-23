@@ -1,6 +1,3 @@
-use std::env;
-
-use aws_sdk_cognitoidentityprovider::Client;
 use chrono::Utc;
 use rspc::{Error, ErrorCode};
 use tracing::error;
@@ -47,21 +44,7 @@ pub async fn create_user(ctx: AppContext, user_request: UserRequestDto) -> Resul
                 return Err(Error::new(ErrorCode::Conflict, "User already exists".into()));
         }
 
-        let user_pool_id = env::var("AWS_COGNITO_USER_POOL_ID").expect("AWS_COGNITO_USER_POOL_ID must be set");
-        let shared_config = aws_config::load_from_env().await;
-        let client = Client::new(&shared_config);
-        let cognito_user = client
-                .admin_get_user()
-                .user_pool_id(user_pool_id)
-                .username(sub.clone())
-                .send()
-                .await
-                .map_err(|_| {
-                        Error::new(
-                                ErrorCode::InternalServerError,
-                                "Failed to retrieve user from cognito".into(),
-                        )
-                })?;
+        let cognito_user = ctx.cognito_service.get_cognito_user(sub.clone()).await?;
 
         let mut email = String::new();
         let mut phone_number = String::new();
@@ -97,4 +80,12 @@ pub async fn create_user(ctx: AppContext, user_request: UserRequestDto) -> Resul
         let user_response = UserResponseDto::from(user);
 
         Ok(user_response)
+}
+
+pub async fn create_user_profile_picture_presigned_upload_url(ctx: AppContext) -> Result<String, Error> {
+        let auth_user = ctx.get_auth_user().await?;
+
+        let presigned_url = ctx.s3_service.get_presigned_upload_url(auth_user.id).await?;
+
+        Ok(presigned_url)
 }

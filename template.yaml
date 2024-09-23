@@ -75,59 +75,6 @@ Resources:
         - "ALLOW_USER_PASSWORD_AUTH"
       UserPoolId: !Ref UserPool
 
-  ECRRepository:
-    Type: AWS::ECR::Repository
-
-  CodeBuild:
-    Type: AWS::CodeBuild::Project
-    Properties:
-      Artifacts:
-        Type: NO_ARTIFACTS
-      Environment:
-        ComputeType: "BUILD_GENERAL1_SMALL"
-        EnvironmentVariables:
-          - Name: "AWS_ACCOUNT_ID"
-            Value: !Ref AWSAccountId
-          - Name: "IMAGE_REPO_NAME"
-            Value: !GetAtt ECRRepository.RepositoryUri
-        Image: "aws/codebuild/amazonlinux2-aarch64-standard:3.0"
-        PrivilegedMode: true
-        Type: "ARM_CONTAINER"
-      ServiceRole: !Ref CodeBuildRole
-      Source:
-        Type: GITHUB
-        Location: "https://github.com/Reilley64/messenger-api"
-
-  CodeBuildRole:
-    Type: AWS::IAM::Role
-    Properties:
-      AssumeRolePolicyDocument:
-        Version: "2012-10-17"
-        Statement:
-          - Effect: Allow
-            Principal:
-              Service: codebuild.amazonaws.com
-            Action: sts:AssumeRole
-      Policies:
-        - PolicyName: CodeBuildPermissions
-          PolicyDocument:
-            Version: "2012-10-17"
-            Statement:
-              - Effect: Allow
-                Action:
-                  - ecr:BatchCheckLayerAvailability
-                  - ecr:CompleteLayerUpload
-                  - ecr:GetAuthorizationToken
-                  - ecr:InitiateLayerUpload
-                  - ecr:PutImage
-                  - ecr:UploadLayerPart
-                  - s3:GetObject
-                  - s3:GetObjectVersion
-                  - s3:PutObject
-                  - cloudwatch:*
-                  - logs:*
-                Resource: "*"
-
   SecurityGroup:
     Type: AWS::EC2::SecurityGroup
     Properties:
@@ -200,6 +147,29 @@ Resources:
         DNSName: !GetAtt ALB.DNSName
         HostedZoneId: !GetAtt ALB.CanonicalHostedZoneID
 
+  UserProfilePicturesBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: false
+        BlockPublicPolicy: false
+        IgnorePublicAcls: false
+        RestrictPublicBuckets: false
+
+  UserProfilePicturesBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref UserProfilePicturesBucket
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: PublicReadGetObject
+            Effect: Allow
+            Principal: "*"
+            Action:
+              - "s3:GetObject"
+            Resource: !Sub "arn:aws:s3:::${UserProfilePicturesBucket}/*"
+
   ECSCluster:
     Type: AWS::ECS::Cluster
 
@@ -224,6 +194,7 @@ Resources:
                   - ecr:GetDownloadUrlForLayer
                   - ecr:BatchGetImage
                   - logs:*
+                  - ssm:*
                 Resource: "*"
 
   ECSTaskRole:
@@ -251,16 +222,20 @@ Resources:
     Properties:
       ContainerDefinitions:
         - Name: Messenger
-          Image: !Sub "${ECRRepository.RepositoryUri}@sha256:74c19343027d8f60fc98c5a95ad3958ee6ca77a6fb3e60a967eb94ba82f785bc"
+          Image: !Sub "390403901733.dkr.ecr.us-east-1.amazonaws.com/messenger/api@sha256:7aba59732942d9ec72a2c08df18fb8c0ca4c2394c9e74b7aa3e145ae61083a14"
           Environment:
+            - Name: "RUST_LOG"
+              Value: "debug"
             - Name: "SERVER_HOST"
               Value: "0.0.0.0"
             - Name: "SERVER_PORT"
               Value: "80"
-            - Name: "AWS_COGNITO_USER_POOL_ID"
-              Value: !Ref UserPool
             - Name: "DATABASE_URL"
               Value: !Sub "postgresql://${DatabaseUsername}:${DatabasePassword}@${Database.Endpoint.Address}/postgres"
+            - Name: "AWS_COGNITO_USER_POOL_ID"
+              Value: !Ref UserPool
+            - Name: "AWS_S3_USER_PROFILE_PICTURE_BUCKET"
+              Value: !Ref UserProfilePicturesBucket
           LogConfiguration:
             LogDriver: awslogs
             Options:
@@ -270,6 +245,9 @@ Resources:
           PortMappings:
             - ContainerPort: 80
               Protocol: tcp
+          Secrets:
+            - Name: "PUSH_PRIVATE_KEY"
+              ValueFrom: "/Prod/Messenger/PushPrivateKey"
       Cpu: "256"
       ExecutionRoleArn: !Ref ECSTaskExecutionRole
       Memory: "512"
@@ -277,7 +255,7 @@ Resources:
       RequiresCompatibilities:
         - FARGATE
       RuntimePlatform:
-        CpuArchitecture: "ARM64"
+        CpuArchitecture: "X86_64"
       TaskRoleArn: !Ref ECSTaskRole
 
   ECSService:

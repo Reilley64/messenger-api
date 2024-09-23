@@ -23,6 +23,8 @@ use repositories::{
 };
 use rspc::{Config, Error, ErrorCode};
 use serde_json::json;
+use services::cognito_service::CognitoService;
+use services::s3_service::S3Service;
 use snowflake::SnowflakeIdGenerator;
 use tokio::sync::RwLock;
 use tower_http::{cors::CorsLayer, trace::TraceLayer};
@@ -35,6 +37,7 @@ pub mod dtos;
 pub mod models;
 pub mod repositories;
 pub mod schema;
+pub mod services;
 
 type DbPool = r2d2::Pool<ConnectionManager<PgConnection>>;
 
@@ -45,6 +48,9 @@ struct AppContext {
         pub id_generator: Arc<Mutex<SnowflakeIdGenerator>>,
         pub headers: HeaderMap,
         pub sub: Arc<Mutex<Option<String>>>,
+
+        pub cognito_service: CognitoService,
+        pub s3_service: S3Service,
 
         pub group_repository: GroupRepository,
         pub message_repository: MessageRepository,
@@ -109,6 +115,73 @@ async fn main() {
                 .run_pending_migrations(MIGRATIONS)
                 .expect("failed to run migrations");
 
+        let auth_router = rspc::Router::<AppContext>::new().query("getAuthUser", |t| {
+                t(|ctx: AppContext, _: ()| auth_controller::get_auth_user(ctx))
+        });
+
+        let group_router = rspc::Router::<AppContext>::new()
+                .query("getGroup", |t| {
+                        t(|ctx: AppContext, group_id: String| group_controller::get_group(ctx, group_id))
+                })
+                .query("getGroupMessages", |t| {
+                        t(|ctx: AppContext, group_id: String| group_controller::get_group_messages(ctx, group_id))
+                })
+                .mutation("createGroupMessage", |t| {
+                        t(
+                                |ctx: AppContext, (group_id, message_request): (String, MessageRequestDto)| {
+                                        group_controller::create_group_message(ctx, group_id, message_request)
+                                },
+                        )
+                });
+
+        let message_router = rspc::Router::<AppContext>::new().query("getMessages", |t| {
+                t(|ctx: AppContext, _: ()| message_controller::get_messages(ctx))
+        });
+
+        let message_request_router = rspc::Router::<AppContext>::new()
+                .query("getMessageRequest", |t| {
+                        t(|ctx: AppContext, message_request_id: String| {
+                                message_request_controller::get_message_request(ctx, message_request_id)
+                        })
+                })
+                .mutation("createMessageRequest", |t| {
+                        t(|ctx: AppContext, message_request_request: MessageRequestRequestDto| {
+                                message_request_controller::create_message_request(ctx, message_request_request)
+                        })
+                })
+                .mutation("approveMessageRequest", |t| {
+                        t(|ctx: AppContext, message_request_id: String| {
+                                message_request_controller::approve_message_request(ctx, message_request_id)
+                        })
+                });
+
+        let users_router = rspc::Router::<AppContext>::new()
+                .query("getUser", |t| {
+                        t(|ctx: AppContext, user_id: String| user_controller::get_user(ctx, user_id))
+                })
+                .mutation("createUser", |t| {
+                        t(|ctx: AppContext, user_request: UserRequestDto| {
+                                user_controller::create_user(ctx, user_request)
+                        })
+                })
+                .mutation("createUserProfilePicturePresignedUploadUrl", |t| {
+                        t(|ctx: AppContext, _: ()| {
+                                user_controller::create_user_profile_picture_presigned_upload_url(ctx)
+                        })
+                });
+
+        let user_push_subscriptions_router =
+                rspc::Router::<AppContext>::new().mutation("createUserPushSubscription", |t| {
+                        t(
+                                |ctx: AppContext, user_push_subscription_request: UserPushSubscriptionRequestDto| {
+                                        user_push_subscription_controller::create_user_push_subscripition(
+                                                ctx,
+                                                user_push_subscription_request,
+                                        )
+                                },
+                        )
+                });
+
         let router = rspc::Router::<AppContext>::new()
                 .config(Config::new().export_ts_bindings(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("gen.ts")))
                 .query("version", |t| t(|_, _: ()| "0.1.0"))
@@ -147,60 +220,16 @@ async fn main() {
                                 Ok(mw)
                         })
                 })
-                .query("AuthController.getAuthUser", |t| {
-                        t(|ctx: AppContext, _: ()| auth_controller::get_auth_user(ctx))
-                })
-                .query("GroupController.getGroup", |t| {
-                        t(|ctx: AppContext, group_id: String| group_controller::get_group(ctx, group_id))
-                })
-                .query("GroupController.getGroupMessages", |t| {
-                        t(|ctx: AppContext, group_id: String| group_controller::get_group_messages(ctx, group_id))
-                })
-                .mutation("GroupController.createGroupMessage", |t| {
-                        t(
-                                |ctx: AppContext, (group_id, message_request): (String, MessageRequestDto)| {
-                                        group_controller::create_group_message(ctx, group_id, message_request)
-                                },
-                        )
-                })
-                .query("MessageController.getMessages", |t| {
-                        t(|ctx: AppContext, _: ()| message_controller::get_messages(ctx))
-                })
-                .query("MessageRequestController.getMessageRequest", |t| {
-                        t(|ctx: AppContext, message_request_id: String| {
-                                message_request_controller::get_message_request(ctx, message_request_id)
-                        })
-                })
-                .mutation("MessageRequestController.createMessageRequest", |t| {
-                        t(|ctx: AppContext, message_request_request: MessageRequestRequestDto| {
-                                message_request_controller::create_message_request(ctx, message_request_request)
-                        })
-                })
-                .mutation("MessageRequestController.approveMessageRequest", |t| {
-                        t(|ctx: AppContext, message_request_id: String| {
-                                message_request_controller::approve_message_request(ctx, message_request_id)
-                        })
-                })
-                .query("UserController.getUser", |t| {
-                        t(|ctx: AppContext, user_id: String| user_controller::get_user(ctx, user_id))
-                })
-                .mutation("UserController.createUser", |t| {
-                        t(|ctx: AppContext, user_request: UserRequestDto| {
-                                user_controller::create_user(ctx, user_request)
-                        })
-                })
-                .mutation("UserPushSubscriptionController.createUserPushSubscription", |t| {
-                        t(
-                                |ctx: AppContext, user_push_subscription_request: UserPushSubscriptionRequestDto| {
-                                        user_push_subscription_controller::create_user_push_subscripition(
-                                                ctx,
-                                                user_push_subscription_request,
-                                        )
-                                },
-                        )
-                })
+                .merge("auth.", auth_router)
+                .merge("groups.", group_router)
+                .merge("messages.", message_router)
+                .merge("messageRequests.", message_request_router)
+                .merge("users.", users_router)
+                .merge("userPushSubscriptions.", user_push_subscriptions_router)
                 .build()
                 .arced();
+
+        let aws_config = aws_config::load_from_env().await;
 
         let app = axum::Router::new()
                 .route("/health", get(|| async { Json(json!({ "status": "up" })) }))
@@ -212,6 +241,11 @@ async fn main() {
                                 id_generator: Arc::new(Mutex::new(SnowflakeIdGenerator::new(1, 1))),
                                 headers,
                                 sub: Arc::new(Mutex::new(None)),
+
+                                cognito_service: CognitoService::new(aws_sdk_cognitoidentityprovider::Client::new(
+                                        &aws_config,
+                                )),
+                                s3_service: S3Service::new(aws_sdk_s3::Client::new(&aws_config)),
 
                                 group_repository: GroupRepository::new(pool.clone()),
                                 message_repository: MessageRepository::new(pool.clone()),
