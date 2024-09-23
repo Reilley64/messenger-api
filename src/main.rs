@@ -4,8 +4,7 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 use authorization::get_cached_token_data;
-use axum::routing::get;
-use axum::Json;
+use axum::{routing::get, Json};
 use controllers::{
         auth_controller, group_controller, message_controller, message_request_controller, user_controller,
         user_push_subscription_controller,
@@ -26,9 +25,7 @@ use rspc::{Config, Error, ErrorCode};
 use serde_json::json;
 use snowflake::SnowflakeIdGenerator;
 use tokio::sync::RwLock;
-use tower_http::cors::CorsLayer;
-use tower_http::trace::TraceLayer;
-use tracing::error;
+use tower_http::{cors::CorsLayer, trace::TraceLayer};
 
 const MIGRATIONS: EmbeddedMigrations = embed_migrations!();
 
@@ -61,7 +58,7 @@ impl AppContext {
                 let sub =
                         self.sub.lock()
                                 .map_err(|_| {
-                                        error!("failed to retrieve sub from app data");
+                                        tracing::error!("failed to retrieve sub from app data");
                                         Error::new(
                                                 ErrorCode::InternalServerError,
                                                 "Failed to retrieve sub from app data".into(),
@@ -69,7 +66,7 @@ impl AppContext {
                                 })?
                                 .clone()
                                 .ok_or_else(|| {
-                                        error!("failed to retrieve sub from app data");
+                                        tracing::error!("failed to retrieve sub from app data");
                                         Error::new(
                                                 ErrorCode::InternalServerError,
                                                 "Failed to retrieve sub from app data".into(),
@@ -98,7 +95,10 @@ impl AppContext {
 async fn main() {
         dotenv().ok();
 
-        tracing_subscriber::fmt::init();
+        tracing_subscriber::fmt()
+                .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+                .with_ansi(false)
+                .init();
 
         let database_url = env::var("DATABASE_URL").expect("DATABASE_URL must be set");
         let manager = ConnectionManager::<PgConnection>::new(database_url);
@@ -134,13 +134,13 @@ async fn main() {
 
                                 {
                                         let mut sub = mw.ctx.sub.lock().map_err(|_| {
-                                                error!("failed to retrieve sub from app data");
+                                                tracing::error!("failed to retrieve sub from app data");
                                                 Error::new(
                                                         ErrorCode::InternalServerError,
                                                         "Failed to retrieve sub from app data".into(),
                                                 )
                                         })?;
-                                        *sub = Some(token_data.claims.sub.clone());
+                                        *sub = Some(token_data.claims.sub);
                                 }
 
                                 Ok(mw)

@@ -68,7 +68,7 @@ async fn send_web_push_notifications(
         group: GroupWithRelationships,
         message_response: MessageResponseDto,
 ) {
-        let push_private_key = env::var("PUSH_PRIVATE_KEY").expect("PUSH_PRIVATE_KET not set");
+        let push_private_key = env::var("PUSH_PRIVATE_KEY").expect("PUSH_PRIVATE_KEY not set");
 
         for gu in group.users.iter() {
                 let user_push_subscription = match ctx
