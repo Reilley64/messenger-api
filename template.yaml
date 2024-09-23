@@ -222,7 +222,7 @@ Resources:
     Properties:
       ContainerDefinitions:
         - Name: Messenger
-          Image: !Sub "390403901733.dkr.ecr.us-east-1.amazonaws.com/messenger/api@sha256:7aba59732942d9ec72a2c08df18fb8c0ca4c2394c9e74b7aa3e145ae61083a14"
+          Image: !Sub "${AWSAccountId}.dkr.ecr.{{AWS::Region}.amazonaws.com/messenger/api@sha256:efe9d7cccefde6a4da1f36bf580f60d32d892f73528e0fd02fcb0ef15fe9464b"
           Environment:
             - Name: "RUST_LOG"
               Value: "debug"
