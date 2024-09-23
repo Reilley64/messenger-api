@@ -147,6 +147,7 @@ pub struct MessageContent {
         pub content: String,
 }
 
+#[derive(Debug, Clone)]
 pub struct MessageWithSource {
         pub id: i64,
         pub created_at: chrono::NaiveDateTime,

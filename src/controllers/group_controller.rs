@@ -2,14 +2,13 @@ use std::env;
 
 use chrono::Utc;
 use rspc::{Error, ErrorCode};
-use tracing::{error, info};
 use web_push::{
         ContentEncoding, SubscriptionInfo, VapidSignatureBuilder, WebPushClient, WebPushMessageBuilder, URL_SAFE_NO_PAD,
 };
 
 use crate::{
         dtos::{GroupResponseDto, MessageRequestDto, MessageResponseDto, UserResponseDto},
-        models::{GroupWithRelationships, MessageWithSource},
+        models::{GroupWithRelationships, Message, MessageWithSource},
         AppContext,
 };
 
@@ -63,11 +62,7 @@ pub async fn get_group_messages(ctx: AppContext, group_id: String) -> Result<Vec
         Ok(message_responses)
 }
 
-async fn send_web_push_notifications(
-        ctx: &AppContext,
-        group: GroupWithRelationships,
-        message_response: MessageResponseDto,
-) {
+async fn send_web_push_notifications(ctx: &AppContext, group: GroupWithRelationships, message: MessageWithSource) {
         let push_private_key = env::var("PUSH_PRIVATE_KEY").expect("PUSH_PRIVATE_KEY not set");
 
         for gu in group.users.iter() {
@@ -78,7 +73,7 @@ async fn send_web_push_notifications(
                         Ok(Some(subscription)) => subscription,
                         Ok(None) => continue, // No subscription for this user
                         Err(e) => {
-                                error!("Error fetching user push subscription: {:?}", e);
+                                tracing::error!("Error fetching user push subscription: {:?}", e);
                                 continue;
                         }
                 };
@@ -96,7 +91,7 @@ async fn send_web_push_notifications(
                 ) {
                         Ok(builder) => builder,
                         Err(e) => {
-                                error!("Failed to build vapid signature: {:?}", e);
+                                tracing::error!("Failed to build vapid signature: {:?}", e);
                                 continue;
                         }
                 };
@@ -104,23 +99,38 @@ async fn send_web_push_notifications(
                 let signature = match signature_builder.build() {
                         Ok(sig) => sig,
                         Err(e) => {
-                                error!("Failed to build vapid signature: {:?}", e);
+                                tracing::error!("Failed to build vapid signature: {:?}", e);
                                 continue;
                         }
                 };
 
-                let json_message_response = match serde_json::to_string(&message_response) {
+                let message_notification = MessageResponseDto {
+                        id: message.id.to_string(),
+                        created_at: message.created_at,
+                        updated_at: message.updated_at,
+                        source: UserResponseDto::from(message.source.clone()),
+                        content: message
+                                .content
+                                .get(&gu.user.id)
+                                .expect("Got message not for auth user")
+                                .clone(),
+                        idempotency_key: message.idempotency_key.clone(),
+                };
+
+                let json_message_response = match serde_json::to_string(&message_notification) {
                         Ok(json) => json,
                         Err(e) => {
-                                error!("Failed to serialize message response: {:?}", e);
+                                tracing::error!("Failed to serialize message response: {:?}", e);
                                 continue;
                         }
                 };
+
+                tracing::debug!("json_message_response: {:?}", json_message_response);
 
                 let mut web_push_message_build = match WebPushMessageBuilder::new(&subscription_info) {
                         Ok(builder) => builder,
                         Err(e) => {
-                                error!("Failed to create WebPushMessageBuilder: {:?}", e);
+                                tracing::error!("Failed to create WebPushMessageBuilder: {:?}", e);
                                 continue;
                         }
                 };
@@ -130,7 +140,7 @@ async fn send_web_push_notifications(
                 let client = match WebPushClient::new() {
                         Ok(client) => client,
                         Err(e) => {
-                                error!("Failed to create WebPushClient: {:?}", e);
+                                tracing::error!("Failed to create WebPushClient: {:?}", e);
                                 continue;
                         }
                 };
@@ -138,14 +148,14 @@ async fn send_web_push_notifications(
                 let web_push_message = match web_push_message_build.build() {
                         Ok(message) => message,
                         Err(e) => {
-                                error!("Failed to build web push message: {:?}", e);
+                                tracing::error!("Failed to build web push message: {:?}", e);
                                 continue;
                         }
                 };
 
                 match client.send(web_push_message).await {
-                        Ok(_) => info!("Web push notification sent successfully"),
-                        Err(e) => error!("Failed to send web push message: {:?}", e),
+                        Ok(_) => tracing::info!("Web push notification sent successfully"),
+                        Err(e) => tracing::error!("Failed to send web push message: {:?}", e),
                 }
         }
 }
@@ -184,6 +194,12 @@ pub async fn create_group_message(
                 })?
         };
 
+        let message_for_notification = message.clone();
+
+        tokio::spawn(async move {
+                send_web_push_notifications(&ctx, group, message_for_notification).await;
+        });
+
         let message_response = MessageResponseDto {
                 id: message.id.to_string(),
                 created_at: message.created_at,
@@ -196,12 +212,6 @@ pub async fn create_group_message(
                         .clone(),
                 idempotency_key: message.idempotency_key,
         };
-
-        let message_response_for_notification = message_response.clone();
-
-        tokio::spawn(async move {
-                send_web_push_notifications(&ctx, group.clone(), message_response_for_notification).await;
-        });
 
         Ok(message_response)
 }
