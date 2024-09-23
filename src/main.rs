@@ -98,6 +98,7 @@ async fn main() {
         tracing_subscriber::fmt()
                 .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
                 .with_ansi(false)
+                .without_time()
                 .init();
 
         let database_url = env::var("DATABASE_URL").expect("DATABASE_URL must be set");
