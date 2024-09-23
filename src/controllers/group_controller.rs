@@ -109,11 +109,7 @@ async fn send_web_push_notifications(ctx: &AppContext, group: GroupWithRelations
                         created_at: message.created_at,
                         updated_at: message.updated_at,
                         source: UserResponseDto::from(message.source.clone()),
-                        content: message
-                                .content
-                                .get(&gu.user.id)
-                                .expect("Got message not for auth user")
-                                .clone(),
+                        content: message.content.get(&gu.user.id).unwrap().clone(),
                         idempotency_key: message.idempotency_key.clone(),
                 };
 

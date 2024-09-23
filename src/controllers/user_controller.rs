@@ -1,11 +1,11 @@
-use chrono::Utc;
-use rspc::{Error, ErrorCode};
-
 use crate::{
-        dtos::{PresignedUploadUrlResponseDto, UserRequestDto, UserResponseDto},
+        dtos::{PresignedUploadUrlRequestDto, PresignedUploadUrlResponseDto, UserRequestDto, UserResponseDto},
         models::User,
         AppContext,
 };
+use chrono::Utc;
+use rspc::{Error, ErrorCode};
+use tracing_subscriber::fmt::format;
 
 pub async fn get_user(ctx: AppContext, user_id: String) -> Result<UserResponseDto, Error> {
         let user_id: i64 = user_id
@@ -85,10 +85,14 @@ pub async fn create_user(ctx: AppContext, user_request: UserRequestDto) -> Resul
 
 pub async fn create_user_profile_picture_presigned_upload_url(
         ctx: AppContext,
+        presigned_upload_url_request: PresignedUploadUrlRequestDto,
 ) -> Result<PresignedUploadUrlResponseDto, Error> {
         let auth_user = ctx.get_auth_user().await?;
 
-        let presigned_url = ctx.s3_service.get_presigned_upload_url(auth_user.id).await?;
+        let presigned_url = ctx
+                .s3_service
+                .get_presigned_upload_url(format!("u/{}", auth_user.id), presigned_upload_url_request.content_type)
+                .await?;
 
         let presigned_url_response = PresignedUploadUrlResponseDto { url: presigned_url };
 

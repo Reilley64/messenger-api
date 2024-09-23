@@ -155,6 +155,15 @@ Resources:
         BlockPublicPolicy: false
         IgnorePublicAcls: false
         RestrictPublicBuckets: false
+      CorsConfiguration:
+        CorsRules:
+          - AllowedOrigins:
+              - "*"
+            AllowedMethods:
+              - PUT
+            AllowedHeaders:
+              - "*"
+            MaxAge: 3000
 
   UserProfilePicturesBucketPolicy:
     Type: AWS::S3::BucketPolicy
@@ -222,7 +231,7 @@ Resources:
     Properties:
       ContainerDefinitions:
         - Name: Messenger
-          Image: !Sub "${AWSAccountId}.dkr.ecr.{{AWS::Region}.amazonaws.com/messenger/api@sha256:efe9d7cccefde6a4da1f36bf580f60d32d892f73528e0fd02fcb0ef15fe9464b"
+          Image: !Sub "${AWSAccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/messenger/api@sha256:efe9d7cccefde6a4da1f36bf580f60d32d892f73528e0fd02fcb0ef15fe9464b"
           Environment:
             - Name: "RUST_LOG"
               Value: "debug"

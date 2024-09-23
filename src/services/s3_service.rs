@@ -11,7 +11,7 @@ pub struct S3Service {
 }
 
 impl S3Service {
-        pub async fn get_presigned_upload_url(&self, user_id: i64) -> Result<String, Error> {
+        pub async fn get_presigned_upload_url(&self, key: String, content_type: String) -> Result<String, Error> {
                 let bucket = env::var("AWS_S3_USER_PROFILE_PICTURE_BUCKET")
                         .expect("AWS_S3_USER_PROFILE_PICTURE_BUCKET_ID must be set");
 
@@ -27,7 +27,8 @@ impl S3Service {
                         .client
                         .put_object()
                         .bucket(bucket)
-                        .key(user_id.to_string())
+                        .key(key)
+                        .content_type(content_type)
                         .presigned(presigning_config)
                         .await
                         .map_err(|_| {

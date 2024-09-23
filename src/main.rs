@@ -13,7 +13,10 @@ use diesel::r2d2::{self, ConnectionManager};
 use diesel::PgConnection;
 use diesel_migrations::{embed_migrations, EmbeddedMigrations, MigrationHarness};
 use dotenvy::dotenv;
-use dtos::{MessageRequestDto, MessageRequestRequestDto, UserPushSubscriptionRequestDto, UserRequestDto};
+use dtos::{
+        MessageRequestDto, MessageRequestRequestDto, PresignedUploadUrlRequestDto, UserPushSubscriptionRequestDto,
+        UserRequestDto,
+};
 use hyper::HeaderMap;
 use models::User;
 use repositories::{
@@ -165,9 +168,14 @@ async fn main() {
                         })
                 })
                 .mutation("createUserProfilePicturePresignedUploadUrl", |t| {
-                        t(|ctx: AppContext, _: ()| {
-                                user_controller::create_user_profile_picture_presigned_upload_url(ctx)
-                        })
+                        t(
+                                |ctx: AppContext, presigned_upload_url_request: PresignedUploadUrlRequestDto| {
+                                        user_controller::create_user_profile_picture_presigned_upload_url(
+                                                ctx,
+                                                presigned_upload_url_request,
+                                        )
+                                },
+                        )
                 });
 
         let user_push_subscriptions_router =

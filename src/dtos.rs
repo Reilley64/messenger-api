@@ -157,6 +157,12 @@ pub struct UserPushSubscriptionResponseDto {
         pub auth: String,
 }
 
+#[derive(Type, Deserialize, Debug, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct PresignedUploadUrlRequestDto {
+        pub content_type: String,
+}
+
 #[derive(Type, Serialize, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct PresignedUploadUrlResponseDto {
