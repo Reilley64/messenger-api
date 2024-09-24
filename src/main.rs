@@ -48,57 +48,50 @@ pub mod services;
 
 type DbPool = r2d2::Pool<ConnectionManager<PgConnection>>;
 
-#[derive(Debug, Clone)]
-struct AppContext {
-        auth_user_cache: Arc<RwLock<HashMap<String, User>>>,
-        message_senders: Arc<RwLock<HashMap<i64, Sender<MessageWithGroupResponseDto>>>>,
-
-        pub id_generator: Arc<Mutex<SnowflakeIdGenerator>>,
-        pub parts: Parts,
-        pub sub: Arc<Mutex<Option<String>>>,
-
-        pub cognito_service: CognitoService,
-        pub s3_service: S3Service,
-
-        pub group_repository: GroupRepository,
-        pub message_repository: MessageRepository,
-        pub message_request_repository: MessageRequestRepository,
-        pub user_push_subscription_repository: UserPushSubscriptionRepository,
-        pub user_repository: UserRepository,
+struct RequestContext {
+        parts: Parts,
+        sub: Option<String>,
+        app_state: Arc<AppState>,
 }
 
-impl AppContext {
-        pub async fn get_auth_user(&self) -> Result<User, Error> {
-                let sub =
-                        self.sub.lock()
-                                .map_err(|_| {
-                                        tracing::error!("failed to retrieve sub from app data");
-                                        Error::new(
-                                                ErrorCode::InternalServerError,
-                                                "Failed to retrieve sub from app data".into(),
-                                        )
-                                })?
-                                .clone()
-                                .ok_or_else(|| {
-                                        tracing::error!("failed to retrieve sub from app data");
-                                        Error::new(
-                                                ErrorCode::InternalServerError,
-                                                "Failed to retrieve sub from app data".into(),
-                                        )
-                                })?;
+struct AppState {
+        auth_user_cache: Arc<RwLock<HashMap<String, User>>>,
+        message_senders: Arc<RwLock<HashMap<i64, Sender<MessageWithGroupResponseDto>>>>,
+        id_generator: Arc<Mutex<SnowflakeIdGenerator>>,
 
-                let cache = self.auth_user_cache.read().await;
-                if let Some(auth_user) = cache.get(&sub) {
+        cognito_service: CognitoService,
+        s3_service: S3Service,
+
+        group_repository: GroupRepository,
+        message_repository: MessageRepository,
+        message_request_repository: MessageRequestRepository,
+        user_push_subscription_repository: UserPushSubscriptionRepository,
+        user_repository: UserRepository,
+}
+
+impl RequestContext {
+        pub async fn get_auth_user(&self) -> Result<User, Error> {
+                let sub = self.sub.as_ref().ok_or_else(|| {
+                        tracing::error!("failed to retrieve sub from request context");
+                        Error::new(
+                                ErrorCode::InternalServerError,
+                                "Failed to retrieve sub from request context".into(),
+                        )
+                })?;
+
+                let cache = self.app_state.auth_user_cache.read().await;
+                if let Some(auth_user) = cache.get(sub) {
                         return Ok(auth_user.clone());
                 }
                 drop(cache);
 
                 let auth_user = self
+                        .app_state
                         .user_repository
                         .find_by_sub(sub.clone())?
                         .ok_or(Error::new(ErrorCode::NotFound, "Auth user not found".into()))?;
 
-                let mut cache = self.auth_user_cache.write().await;
+                let mut cache = self.app_state.auth_user_cache.write().await;
                 cache.insert(sub.clone(), auth_user.clone());
 
                 Ok(auth_user)
@@ -123,28 +116,32 @@ async fn main() {
                 .run_pending_migrations(MIGRATIONS)
                 .expect("failed to run migrations");
 
-        let auth_router = rspc::Router::<AppContext>::new().query("getAuthUser", |t| {
-                t(|ctx: AppContext, _: ()| auth_controller::get_auth_user(ctx))
+        let auth_router = rspc::Router::<RequestContext>::new().query("getAuthUser", |t| {
+                t(|ctx: RequestContext, _: ()| auth_controller::get_auth_user(ctx))
         });
 
-        let group_router = rspc::Router::<AppContext>::new()
+        let group_router = rspc::Router::<RequestContext>::new()
                 .query("getGroup", |t| {
-                        t(|ctx: AppContext, group_id: String| group_controller::get_group(ctx, group_id))
+                        t(|ctx: RequestContext, group_id: String| group_controller::get_group(ctx, group_id))
                 })
                 .query("getGroupMessages", |t| {
-                        t(|ctx: AppContext, group_id: String| group_controller::get_group_messages(ctx, group_id))
+                        t(
+                                |ctx: RequestContext, group_id: String| {
+                                        group_controller::get_group_messages(ctx, group_id)
+                                },
+                        )
                 })
                 .mutation("createGroupMessage", |t| {
                         t(
-                                |ctx: AppContext, (group_id, message_request): (String, MessageRequestDto)| {
+                                |ctx: RequestContext, (group_id, message_request): (String, MessageRequestDto)| {
                                         group_controller::create_group_message(ctx, group_id, message_request)
                                 },
                         )
                 });
 
-        let message_router = rspc::Router::<AppContext>::new()
+        let message_router = rspc::Router::<RequestContext>::new()
                 .query("getMessages", |t| {
-                        t(|ctx: AppContext, _: ()| message_controller::get_messages(ctx))
+                        t(|ctx: RequestContext, _: ()| message_controller::get_messages(ctx))
                 })
                 .subscription("subscribeToMessages", |t| {
                         t(|ctx, _: ()| {
@@ -154,13 +151,16 @@ async fn main() {
                                         let (tx, rx) = broadcast::channel(100);
 
                                         {
-                                                let mut senders = ctx.message_senders.write().await;
+                                                let mut senders = ctx.app_state.message_senders.write().await;
                                                 senders.insert(auth_user.id, tx);
+                                                tracing::debug!("User {} subscribed to messages", auth_user.id);
                                         };
 
                                        let stream = BroadcastStream::new(rx);
 
                                        for await message in stream {
+                                               tracing::debug!("Received message: {:?}", message);
+
                                                match message {
                                                         Ok(message) => yield Some(message),
                                                         Err(_) => yield None
@@ -171,35 +171,37 @@ async fn main() {
                         })
                 });
 
-        let message_request_router = rspc::Router::<AppContext>::new()
+        let message_request_router = rspc::Router::<RequestContext>::new()
                 .query("getMessageRequest", |t| {
-                        t(|ctx: AppContext, message_request_id: String| {
+                        t(|ctx: RequestContext, message_request_id: String| {
                                 message_request_controller::get_message_request(ctx, message_request_id)
                         })
                 })
                 .mutation("createMessageRequest", |t| {
-                        t(|ctx: AppContext, message_request_request: MessageRequestRequestDto| {
-                                message_request_controller::create_message_request(ctx, message_request_request)
-                        })
+                        t(
+                                |ctx: RequestContext, message_request_request: MessageRequestRequestDto| {
+                                        message_request_controller::create_message_request(ctx, message_request_request)
+                                },
+                        )
                 })
                 .mutation("approveMessageRequest", |t| {
-                        t(|ctx: AppContext, message_request_id: String| {
+                        t(|ctx: RequestContext, message_request_id: String| {
                                 message_request_controller::approve_message_request(ctx, message_request_id)
                         })
                 });
 
-        let users_router = rspc::Router::<AppContext>::new()
+        let users_router = rspc::Router::<RequestContext>::new()
                 .query("getUser", |t| {
-                        t(|ctx: AppContext, user_id: String| user_controller::get_user(ctx, user_id))
+                        t(|ctx: RequestContext, user_id: String| user_controller::get_user(ctx, user_id))
                 })
                 .mutation("createUser", |t| {
-                        t(|ctx: AppContext, user_request: UserRequestDto| {
+                        t(|ctx: RequestContext, user_request: UserRequestDto| {
                                 user_controller::create_user(ctx, user_request)
                         })
                 })
                 .mutation("createUserProfilePicturePresignedUploadUrl", |t| {
                         t(
-                                |ctx: AppContext, presigned_upload_url_request: PresignedUploadUrlRequestDto| {
+                                |ctx: RequestContext, presigned_upload_url_request: PresignedUploadUrlRequestDto| {
                                         user_controller::create_user_profile_picture_presigned_upload_url(
                                                 ctx,
                                                 presigned_upload_url_request,
@@ -209,9 +211,9 @@ async fn main() {
                 });
 
         let user_push_subscriptions_router =
-                rspc::Router::<AppContext>::new().mutation("createUserPushSubscription", |t| {
+                rspc::Router::<RequestContext>::new().mutation("createUserPushSubscription", |t| {
                         t(
-                                |ctx: AppContext, user_push_subscription_request: UserPushSubscriptionRequestDto| {
+                                |ctx: RequestContext, user_push_subscription_request: UserPushSubscriptionRequestDto| {
                                         user_push_subscription_controller::create_user_push_subscripition(
                                                 ctx,
                                                 user_push_subscription_request,
@@ -220,14 +222,14 @@ async fn main() {
                         )
                 });
 
-        let router = rspc::Router::<AppContext>::new()
+        let router = rspc::Router::<RequestContext>::new()
                 .config(Config::new().export_ts_bindings(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("gen.ts")))
                 .query("version", |t| t(|_, _: ()| "0.1.0"))
                 .middleware(|mw| {
-                        mw.middleware(|mw| async move {
+                        mw.middleware(|mut mw| async move {
                                 let query_str = mw.ctx.parts.uri.query().ok_or(Error::new(
                                         ErrorCode::Unauthorized,
-                                        "Missing Authorization header".into(),
+                                        "Missing authorization param".into(),
                                 ))?;
 
                                 let query_params: HashMap<_, _> =
@@ -235,23 +237,14 @@ async fn main() {
 
                                 let authorization = query_params.get("authorization").ok_or(Error::new(
                                         ErrorCode::Unauthorized,
-                                        "Missing Authorization header".into(),
+                                        "Missing authorization param".into(),
                                 ))?;
 
                                 let token_data = get_cached_token_data(authorization)
                                         .await
                                         .map_err(|_| Error::new(ErrorCode::Unauthorized, "Token invalid".into()))?;
 
-                                {
-                                        let mut sub = mw.ctx.sub.lock().map_err(|_| {
-                                                tracing::error!("failed to retrieve sub from app data");
-                                                Error::new(
-                                                        ErrorCode::InternalServerError,
-                                                        "Failed to retrieve sub from app data".into(),
-                                                )
-                                        })?;
-                                        *sub = Some(token_data.claims.sub);
-                                }
+                                mw.ctx.sub = Some(token_data.claims.sub);
 
                                 Ok(mw)
                         })
@@ -267,28 +260,27 @@ async fn main() {
 
         let aws_config = aws_config::load_from_env().await;
 
+        let app_state = Arc::new(AppState {
+                auth_user_cache: Arc::new(RwLock::new(HashMap::new())),
+                message_senders: Arc::new(RwLock::new(HashMap::new())),
+                id_generator: Arc::new(Mutex::new(SnowflakeIdGenerator::new(1, 1))),
+                cognito_service: CognitoService::new(aws_sdk_cognitoidentityprovider::Client::new(&aws_config)),
+                s3_service: S3Service::new(aws_sdk_s3::Client::new(&aws_config)),
+                group_repository: GroupRepository::new(pool.clone()),
+                message_repository: MessageRepository::new(pool.clone()),
+                message_request_repository: MessageRequestRepository::new(pool.clone()),
+                user_push_subscription_repository: UserPushSubscriptionRepository::new(pool.clone()),
+                user_repository: UserRepository::new(pool.clone()),
+        });
+
         let app = axum::Router::new()
                 .route("/health", get(|| async { Json(json!({ "status": "up" })) }))
                 .nest(
                         "/rspc",
-                        rspc_axum::endpoint(router, move |parts: Parts| AppContext {
-                                auth_user_cache: Arc::new(RwLock::new(HashMap::new())),
-                                message_senders: Arc::new(RwLock::new(HashMap::new())),
-
-                                id_generator: Arc::new(Mutex::new(SnowflakeIdGenerator::new(1, 1))),
-                                parts: parts,
-                                sub: Arc::new(Mutex::new(None)),
-
-                                cognito_service: CognitoService::new(aws_sdk_cognitoidentityprovider::Client::new(
-                                        &aws_config,
-                                )),
-                                s3_service: S3Service::new(aws_sdk_s3::Client::new(&aws_config)),
-
-                                group_repository: GroupRepository::new(pool.clone()),
-                                message_repository: MessageRepository::new(pool.clone()),
-                                message_request_repository: MessageRequestRepository::new(pool.clone()),
-                                user_push_subscription_repository: UserPushSubscriptionRepository::new(pool.clone()),
-                                user_repository: UserRepository::new(pool.clone()),
+                        rspc_axum::endpoint(router, move |parts: Parts| RequestContext {
+                                parts,
+                                sub: None,
+                                app_state: Arc::clone(&app_state),
                         }),
                 )
                 .layer(TraceLayer::new_for_http())

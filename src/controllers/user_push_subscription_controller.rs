@@ -4,26 +4,28 @@ use rspc::Error;
 use crate::{
         dtos::{UserPushSubscriptionRequestDto, UserPushSubscriptionResponseDto},
         models::UserPushSubscription,
-        AppContext,
+        RequestContext,
 };
 
 pub async fn create_user_push_subscripition(
-        ctx: AppContext,
+        ctx: RequestContext,
         user_push_subscription_request: UserPushSubscriptionRequestDto,
 ) -> Result<UserPushSubscriptionResponseDto, Error> {
         let auth_user = ctx.get_auth_user().await?;
 
         let user_push_subscrption = {
-                let mut id_generator = ctx.id_generator.lock().unwrap();
-                ctx.user_push_subscription_repository.save(UserPushSubscription {
-                        id: id_generator.generate(),
-                        created_at: Utc::now().naive_utc(),
-                        updated_at: Utc::now().naive_utc(),
-                        user_id: auth_user.id,
-                        endpoint: user_push_subscription_request.endpoint.clone(),
-                        p256dh: user_push_subscription_request.p256dh.clone(),
-                        auth: user_push_subscription_request.auth.clone(),
-                })?
+                let mut id_generator = ctx.app_state.id_generator.lock().unwrap();
+                ctx.app_state
+                        .user_push_subscription_repository
+                        .save(UserPushSubscription {
+                                id: id_generator.generate(),
+                                created_at: Utc::now().naive_utc(),
+                                updated_at: Utc::now().naive_utc(),
+                                user_id: auth_user.id,
+                                endpoint: user_push_subscription_request.endpoint.clone(),
+                                p256dh: user_push_subscription_request.p256dh.clone(),
+                                auth: user_push_subscription_request.auth.clone(),
+                        })?
         };
 
         let user_push_subscription_response = UserPushSubscriptionResponseDto {

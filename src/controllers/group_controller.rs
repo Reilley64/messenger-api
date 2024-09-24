@@ -9,10 +9,10 @@ use web_push::{
 use crate::{
         dtos::{GroupResponseDto, MessageRequestDto, MessageResponseDto, MessageWithGroupResponseDto, UserResponseDto},
         models::{GroupWithRelationships, MessageWithRelationships},
-        AppContext,
+        RequestContext,
 };
 
-pub async fn get_group(ctx: AppContext, group_id: String) -> Result<GroupResponseDto, Error> {
+pub async fn get_group(ctx: RequestContext, group_id: String) -> Result<GroupResponseDto, Error> {
         let group_id: i64 = group_id
                 .parse()
                 .map_err(|_| Error::new(ErrorCode::BadRequest, "Invalid group_id".into()))?;
@@ -20,6 +20,7 @@ pub async fn get_group(ctx: AppContext, group_id: String) -> Result<GroupRespons
         let auth_user = ctx.get_auth_user().await?;
 
         let group = ctx
+                .app_state
                 .group_repository
                 .find_by_id_and_user_id(group_id, auth_user.id)?
                 .ok_or(Error::new(ErrorCode::NotFound, "Group not found".into()))?;
@@ -29,7 +30,7 @@ pub async fn get_group(ctx: AppContext, group_id: String) -> Result<GroupRespons
         Ok(group_response)
 }
 
-pub async fn get_group_messages(ctx: AppContext, group_id: String) -> Result<Vec<MessageResponseDto>, Error> {
+pub async fn get_group_messages(ctx: RequestContext, group_id: String) -> Result<Vec<MessageResponseDto>, Error> {
         let group_id: i64 = group_id
                 .parse()
                 .map_err(|_| Error::new(ErrorCode::BadRequest, "Invalid group_id".into()))?;
@@ -37,11 +38,12 @@ pub async fn get_group_messages(ctx: AppContext, group_id: String) -> Result<Vec
         let auth_user = ctx.get_auth_user().await?;
 
         let group = ctx
+                .app_state
                 .group_repository
                 .find_by_id_and_user_id(group_id, auth_user.id)?
                 .ok_or(Error::new(ErrorCode::NotFound, "Group not found".into()))?;
 
-        let messages = ctx.message_repository.find_by_group_id(group.id)?;
+        let messages = ctx.app_state.message_repository.find_by_group_id(group.id)?;
 
         let message_responses = messages
                 .into_iter()
@@ -63,7 +65,7 @@ pub async fn get_group_messages(ctx: AppContext, group_id: String) -> Result<Vec
 }
 
 async fn send_web_push_notifications(
-        ctx: &AppContext,
+        ctx: &RequestContext,
         group: GroupWithRelationships,
         message: MessageWithRelationships,
 ) {
@@ -71,6 +73,7 @@ async fn send_web_push_notifications(
 
         for gu in group.users.iter() {
                 let user_push_subscription = match ctx
+                        .app_state
                         .user_push_subscription_repository
                         .find_by_user_id_order_by_created_at_desc(gu.user.id)
                 {
@@ -108,7 +111,7 @@ async fn send_web_push_notifications(
                         }
                 };
 
-                let message_notification = MessageWithGroupResponseDto {
+                let message_response = MessageWithGroupResponseDto {
                         id: message.id.to_string(),
                         created_at: message.created_at,
                         updated_at: message.updated_at,
@@ -118,7 +121,7 @@ async fn send_web_push_notifications(
                         idempotency_key: message.idempotency_key.clone(),
                 };
 
-                let json_message_response = match serde_json::to_string(&message_notification) {
+                let json_message_response = match serde_json::to_string(&message_response) {
                         Ok(json) => json,
                         Err(e) => {
                                 tracing::error!("Failed to serialize message response: {:?}", e);
@@ -162,7 +165,7 @@ async fn send_web_push_notifications(
 }
 
 pub async fn create_group_message(
-        ctx: AppContext,
+        ctx: RequestContext,
         group_id: String,
         message_request: MessageRequestDto,
 ) -> Result<MessageResponseDto, Error> {
@@ -173,13 +176,14 @@ pub async fn create_group_message(
         let auth_user = ctx.get_auth_user().await?;
 
         let group = ctx
+                .app_state
                 .group_repository
                 .find_by_id_and_user_id(group_id, auth_user.id)?
                 .ok_or(Error::new(ErrorCode::NotFound, "Group not found".into()))?;
 
         let message = {
-                let mut id_generator = ctx.id_generator.lock().unwrap();
-                ctx.message_repository.save(MessageWithRelationships {
+                let mut id_generator = ctx.app_state.id_generator.lock().unwrap();
+                ctx.app_state.message_repository.save(MessageWithRelationships {
                         id: id_generator.generate(),
                         created_at: Utc::now().naive_utc(),
                         updated_at: Utc::now().naive_utc(),
@@ -196,7 +200,9 @@ pub async fn create_group_message(
         };
 
         for gu in group.users.iter() {
-                if let Some(sender) = ctx.message_senders.read().await.get(&gu.user.id) {
+                tracing::debug!("Looking for user {} in message senders", gu.user.id);
+                if let Some(sender) = ctx.app_state.message_senders.read().await.get(&gu.user.id) {
+                        tracing::debug!("Sending message to user {}", gu.user.id);
                         let message_response = MessageWithGroupResponseDto {
                                 id: message.id.to_string(),
                                 created_at: message.created_at,
@@ -207,7 +213,9 @@ pub async fn create_group_message(
                                 idempotency_key: message.idempotency_key.clone(),
                         };
                         match sender.send(message_response) {
-                                Ok(_) => {}
+                                Ok(_) => {
+                                        tracing::debug!("Message sent to user {}", gu.user.id);
+                                }
                                 Err(e) => {
                                         tracing::error!("Failed to send message to user: {:?}", e);
                                 }
@@ -217,9 +225,7 @@ pub async fn create_group_message(
 
         let message_for_notification = message.clone();
 
-        tokio::spawn(async move {
-                send_web_push_notifications(&ctx, group, message_for_notification).await;
-        });
+        send_web_push_notifications(&ctx, group, message_for_notification).await;
 
         let message_response = MessageResponseDto {
                 id: message.id.to_string(),

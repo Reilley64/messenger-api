@@ -2,13 +2,13 @@ use rspc::Error;
 
 use crate::{
         dtos::{GroupResponseDto, MessageWithGroupResponseDto, UserResponseDto},
-        AppContext,
+        RequestContext,
 };
 
-pub async fn get_messages(ctx: AppContext) -> Result<Vec<MessageWithGroupResponseDto>, Error> {
+pub async fn get_messages(ctx: RequestContext) -> Result<Vec<MessageWithGroupResponseDto>, Error> {
         let auth_user = ctx.get_auth_user().await?;
 
-        let messages = ctx.message_repository.find_by_user_id(auth_user.id)?;
+        let messages = ctx.app_state.message_repository.find_by_user_id(auth_user.id)?;
 
         let message_responses = messages
                 .into_iter()
