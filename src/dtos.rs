@@ -64,7 +64,7 @@ impl From<MessageRequestWithRelationships> for MessageRequestResponseDto {
         }
 }
 
-#[derive(Type, Serialize)]
+#[derive(Type, Serialize, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct GroupResponseDto {
         pub id: String,
@@ -125,7 +125,7 @@ pub struct MessageResponseDto {
         pub idempotency_key: Option<String>,
 }
 
-#[derive(Type, Serialize)]
+#[derive(Type, Serialize, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct MessageWithGroupResponseDto {
         pub id: String,

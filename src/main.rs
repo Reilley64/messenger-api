@@ -4,6 +4,7 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 use authorization::get_cached_token_data;
+use axum::http::request::Parts;
 use axum::{routing::get, Json};
 use controllers::{
         auth_controller, group_controller, message_controller, message_request_controller, user_controller,
@@ -14,10 +15,9 @@ use diesel::PgConnection;
 use diesel_migrations::{embed_migrations, EmbeddedMigrations, MigrationHarness};
 use dotenvy::dotenv;
 use dtos::{
-        MessageRequestDto, MessageRequestRequestDto, PresignedUploadUrlRequestDto, UserPushSubscriptionRequestDto,
-        UserRequestDto,
+        MessageRequestDto, MessageRequestRequestDto, MessageWithGroupResponseDto, PresignedUploadUrlRequestDto,
+        UserPushSubscriptionRequestDto, UserRequestDto,
 };
-use hyper::HeaderMap;
 use models::User;
 use repositories::{
         group_repository::GroupRepository, message_repository::MessageRepository,
@@ -29,7 +29,11 @@ use serde_json::json;
 use services::cognito_service::CognitoService;
 use services::s3_service::S3Service;
 use snowflake::SnowflakeIdGenerator;
-use tokio::sync::RwLock;
+use tokio::sync::{
+        broadcast::{self, Sender},
+        RwLock,
+};
+use tokio_stream::wrappers::BroadcastStream;
 use tower_http::{cors::CorsLayer, trace::TraceLayer};
 
 const MIGRATIONS: EmbeddedMigrations = embed_migrations!();
@@ -47,9 +51,10 @@ type DbPool = r2d2::Pool<ConnectionManager<PgConnection>>;
 #[derive(Debug, Clone)]
 struct AppContext {
         auth_user_cache: Arc<RwLock<HashMap<String, User>>>,
+        message_senders: Arc<RwLock<HashMap<i64, Sender<MessageWithGroupResponseDto>>>>,
 
         pub id_generator: Arc<Mutex<SnowflakeIdGenerator>>,
-        pub headers: HeaderMap,
+        pub parts: Parts,
         pub sub: Arc<Mutex<Option<String>>>,
 
         pub cognito_service: CognitoService,
@@ -137,9 +142,34 @@ async fn main() {
                         )
                 });
 
-        let message_router = rspc::Router::<AppContext>::new().query("getMessages", |t| {
-                t(|ctx: AppContext, _: ()| message_controller::get_messages(ctx))
-        });
+        let message_router = rspc::Router::<AppContext>::new()
+                .query("getMessages", |t| {
+                        t(|ctx: AppContext, _: ()| message_controller::get_messages(ctx))
+                })
+                .subscription("subscribeToMessages", |t| {
+                        t(|ctx, _: ()| {
+                                async_stream::stream! {
+                                        let auth_user = ctx.get_auth_user().await.unwrap();
+
+                                        let (tx, rx) = broadcast::channel(100);
+
+                                        {
+                                                let mut senders = ctx.message_senders.write().await;
+                                                senders.insert(auth_user.id, tx);
+                                        };
+
+                                       let stream = BroadcastStream::new(rx);
+
+                                       for await message in stream {
+                                               match message {
+                                                        Ok(message) => yield Some(message),
+                                                        Err(_) => yield None
+                                                }
+
+                                       }
+                                }
+                        })
+                });
 
         let message_request_router = rspc::Router::<AppContext>::new()
                 .query("getMessageRequest", |t| {
@@ -195,22 +225,20 @@ async fn main() {
                 .query("version", |t| t(|_, _: ()| "0.1.0"))
                 .middleware(|mw| {
                         mw.middleware(|mw| async move {
-                                let authorization = mw.ctx.headers.get("Authorization").ok_or(Error::new(
+                                let query_str = mw.ctx.parts.uri.query().ok_or(Error::new(
                                         ErrorCode::Unauthorized,
                                         "Missing Authorization header".into(),
                                 ))?;
 
-                                let bearer_token = authorization.to_str().map_err(|_| {
-                                        Error::new(ErrorCode::Unauthorized, "Bearer token invalid".into())
-                                })?;
+                                let query_params: HashMap<_, _> =
+                                        url::form_urlencoded::parse(query_str.as_bytes()).into_owned().collect();
 
-                                if !bearer_token.starts_with("Bearer ") {
-                                        return Err(Error::new(ErrorCode::Unauthorized, "Bearer token invalid".into()));
-                                }
+                                let authorization = query_params.get("authorization").ok_or(Error::new(
+                                        ErrorCode::Unauthorized,
+                                        "Missing Authorization header".into(),
+                                ))?;
 
-                                let token = &bearer_token[7..];
-
-                                let token_data = get_cached_token_data(token)
+                                let token_data = get_cached_token_data(authorization)
                                         .await
                                         .map_err(|_| Error::new(ErrorCode::Unauthorized, "Token invalid".into()))?;
 
@@ -243,11 +271,12 @@ async fn main() {
                 .route("/health", get(|| async { Json(json!({ "status": "up" })) }))
                 .nest(
                         "/rspc",
-                        rspc_axum::endpoint(router, move |headers: HeaderMap| AppContext {
+                        rspc_axum::endpoint(router, move |parts: Parts| AppContext {
                                 auth_user_cache: Arc::new(RwLock::new(HashMap::new())),
+                                message_senders: Arc::new(RwLock::new(HashMap::new())),
 
                                 id_generator: Arc::new(Mutex::new(SnowflakeIdGenerator::new(1, 1))),
-                                headers,
+                                parts: parts,
                                 sub: Arc::new(Mutex::new(None)),
 
                                 cognito_service: CognitoService::new(aws_sdk_cognitoidentityprovider::Client::new(

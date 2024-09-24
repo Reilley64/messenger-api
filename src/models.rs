@@ -172,6 +172,7 @@ impl From<(Message, User, HashMap<i64, String>)> for MessageWithSource {
         }
 }
 
+#[derive(Debug, Clone)]
 pub struct MessageWithGroup {
         pub id: i64,
         pub created_at: chrono::NaiveDateTime,
@@ -191,6 +192,33 @@ impl From<(Message, GroupWithRelationships, User, MessageContent)> for MessageWi
                         group,
                         source,
                         content: content.content,
+                        idempotency_key: message.idempotency_key,
+                }
+        }
+}
+
+#[derive(Debug, Clone)]
+pub struct MessageWithRelationships {
+        pub id: i64,
+        pub created_at: chrono::NaiveDateTime,
+        pub updated_at: chrono::NaiveDateTime,
+        pub group: GroupWithRelationships,
+        pub source: User,
+        pub content: HashMap<i64, String>,
+        pub idempotency_key: Option<String>,
+}
+
+impl From<(Message, GroupWithRelationships, User, HashMap<i64, String>)> for MessageWithRelationships {
+        fn from(
+                (message, group, source, content): (Message, GroupWithRelationships, User, HashMap<i64, String>),
+        ) -> Self {
+                MessageWithRelationships {
+                        id: message.id,
+                        created_at: message.created_at,
+                        updated_at: message.updated_at,
+                        group,
+                        source,
+                        content,
                         idempotency_key: message.idempotency_key,
                 }
         }

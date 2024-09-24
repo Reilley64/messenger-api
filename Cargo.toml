@@ -6,7 +6,8 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-axum = { version = "0.7.6", features = ["tracing"] }
+async-stream = "0.3.5"
+axum = { version = "0.7.6", features = ["tracing", "ws"] }
 aws-config = { version = "1.5.6", features = ["behavior-version-latest"] }
 aws-sdk-cognitoidentityprovider = "1.51.0"
 aws-sdk-s3 = "1.51.0"
@@ -20,15 +21,17 @@ hyper = "1.4.1"
 jsonwebtoken = "9.3.0"
 lazy_static = "1.5.0"
 reqwest = { version = "0.12.7", features = ["json"] }
-rspc = "0.2.0"
-rspc-axum = "0.1.1"
+rspc = { version = "0.2.0", features = ["tracing"] }
+rspc-axum = { version = "0.1.1", features = ["ws"] }
 rs-snowflake = "0.6.0"
 serde = { version = "1.0.210", features = ["derive"] }
 serde_json = "1.0.128"
 specta = { version = "1.0.5", features = ["chrono"] }
 tokio = { version = "1.40.0", features = ["full"] }
+tokio-stream = { version = "0.1.16", features = ["sync"] }
 tower = "0.5.1"
 tower-http = { version = "0.6.0", features = ["cors", "trace"] }
 tracing = "0.1.40"
 tracing-subscriber = { version = "0.3.18", features = ["env-filter"] }
 web-push = { version = "0.9.5", features = ["hyper-client"] }
+url = "2.5.2"

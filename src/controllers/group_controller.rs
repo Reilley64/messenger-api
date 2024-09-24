@@ -7,8 +7,8 @@ use web_push::{
 };
 
 use crate::{
-        dtos::{GroupResponseDto, MessageRequestDto, MessageResponseDto, UserResponseDto},
-        models::{GroupWithRelationships, MessageWithSource},
+        dtos::{GroupResponseDto, MessageRequestDto, MessageResponseDto, MessageWithGroupResponseDto, UserResponseDto},
+        models::{GroupWithRelationships, MessageWithRelationships},
         AppContext,
 };
 
@@ -62,7 +62,11 @@ pub async fn get_group_messages(ctx: AppContext, group_id: String) -> Result<Vec
         Ok(message_responses)
 }
 
-async fn send_web_push_notifications(ctx: &AppContext, group: GroupWithRelationships, message: MessageWithSource) {
+async fn send_web_push_notifications(
+        ctx: &AppContext,
+        group: GroupWithRelationships,
+        message: MessageWithRelationships,
+) {
         let push_private_key = env::var("PUSH_PRIVATE_KEY").expect("PUSH_PRIVATE_KEY not set");
 
         for gu in group.users.iter() {
@@ -104,10 +108,11 @@ async fn send_web_push_notifications(ctx: &AppContext, group: GroupWithRelations
                         }
                 };
 
-                let message_notification = MessageResponseDto {
+                let message_notification = MessageWithGroupResponseDto {
                         id: message.id.to_string(),
                         created_at: message.created_at,
                         updated_at: message.updated_at,
+                        group: GroupResponseDto::from(message.group.clone()),
                         source: UserResponseDto::from(message.source.clone()),
                         content: message.content.get(&gu.user.id).unwrap().clone(),
                         idempotency_key: message.idempotency_key.clone(),
@@ -174,11 +179,11 @@ pub async fn create_group_message(
 
         let message = {
                 let mut id_generator = ctx.id_generator.lock().unwrap();
-                ctx.message_repository.save(MessageWithSource {
+                ctx.message_repository.save(MessageWithRelationships {
                         id: id_generator.generate(),
                         created_at: Utc::now().naive_utc(),
                         updated_at: Utc::now().naive_utc(),
-                        group_id: group.id,
+                        group: group.clone(),
                         source: auth_user.clone(),
                         content: message_request
                                 .content
@@ -189,6 +194,26 @@ pub async fn create_group_message(
                         idempotency_key: message_request.idempotency_key.clone(),
                 })?
         };
+
+        for gu in group.users.iter() {
+                if let Some(sender) = ctx.message_senders.read().await.get(&gu.user.id) {
+                        let message_response = MessageWithGroupResponseDto {
+                                id: message.id.to_string(),
+                                created_at: message.created_at,
+                                updated_at: message.updated_at,
+                                group: GroupResponseDto::from(message.group.clone()),
+                                source: UserResponseDto::from(message.source.clone()),
+                                content: message.content.get(&gu.user.id).unwrap().clone(),
+                                idempotency_key: message.idempotency_key.clone(),
+                        };
+                        match sender.send(message_response) {
+                                Ok(_) => {}
+                                Err(e) => {
+                                        tracing::error!("Failed to send message to user: {:?}", e);
+                                }
+                        }
+                };
+        }
 
         let message_for_notification = message.clone();
 

@@ -1,11 +1,11 @@
+use chrono::Utc;
+use rspc::{Error, ErrorCode};
+
 use crate::{
         dtos::{PresignedUploadUrlRequestDto, PresignedUploadUrlResponseDto, UserRequestDto, UserResponseDto},
         models::User,
         AppContext,
 };
-use chrono::Utc;
-use rspc::{Error, ErrorCode};
-use tracing_subscriber::fmt::format;
 
 pub async fn get_user(ctx: AppContext, user_id: String) -> Result<UserResponseDto, Error> {
         let user_id: i64 = user_id

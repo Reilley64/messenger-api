@@ -4,10 +4,11 @@ use diesel::prelude::*;
 use diesel::r2d2::{self, ConnectionManager};
 use rspc::{Error, ErrorCode};
 
+use crate::models::MessageWithGroup;
 use crate::{
         models::{
                 Group, GroupUser, GroupUserWithRelationships, GroupWithRelationships, Message, MessageContent,
-                MessageWithGroup, MessageWithSource, User,
+                MessageWithRelationships, MessageWithSource, User,
         },
         schema::{groups, message_content, messages, users},
 };
@@ -130,14 +131,17 @@ impl MessageRepository {
                 Ok(messages_with_group)
         }
 
-        pub fn save(&self, messages_with_source: MessageWithSource) -> Result<MessageWithSource, Error> {
+        pub fn save(
+                &self,
+                messages_with_relatioships: MessageWithRelationships,
+        ) -> Result<MessageWithRelationships, Error> {
                 let message = Message {
-                        id: messages_with_source.id,
-                        created_at: messages_with_source.created_at,
-                        updated_at: messages_with_source.updated_at,
-                        group_id: messages_with_source.group_id,
-                        source_id: messages_with_source.source.id,
-                        idempotency_key: messages_with_source.idempotency_key,
+                        id: messages_with_relatioships.id,
+                        created_at: messages_with_relatioships.created_at,
+                        updated_at: messages_with_relatioships.updated_at,
+                        group_id: messages_with_relatioships.group.id,
+                        source_id: messages_with_relatioships.source.id,
+                        idempotency_key: messages_with_relatioships.idempotency_key,
                 };
 
                 let mut connection = self
@@ -158,7 +162,7 @@ impl MessageRepository {
                                 "failed to query database".into(),
                         ))?;
 
-                for (user_id, content) in &messages_with_source.content {
+                for (user_id, content) in &messages_with_relatioships.content {
                         let message_content = MessageContent {
                                 message_id: message.id,
                                 user_id: user_id.clone(),
@@ -176,11 +180,13 @@ impl MessageRepository {
                                 })?;
                 }
 
-                let source = users::table
-                        .find(message.source_id)
-                        .first(&mut connection)
-                        .map_err(|_| Error::new(ErrorCode::InternalServerError, "failed to query database".into()))?;
+                let message_with_relationships = MessageWithRelationships::from((
+                        message,
+                        messages_with_relatioships.group,
+                        messages_with_relatioships.source,
+                        messages_with_relatioships.content,
+                ));
 
-                Ok(MessageWithSource::from((message, source, messages_with_source.content)))
+                Ok(message_with_relationships)
         }
 }
