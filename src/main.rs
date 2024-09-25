@@ -26,8 +26,7 @@ use repositories::{
 };
 use rspc::{Config, Error, ErrorCode};
 use serde_json::json;
-use services::cognito_service::CognitoService;
-use services::s3_service::S3Service;
+use services::google_cloud_storage_service::GoogleCloudStorageService;
 use snowflake::SnowflakeIdGenerator;
 use tokio::sync::{
         broadcast::{self, Sender},
@@ -59,8 +58,7 @@ struct AppState {
         message_senders: Arc<RwLock<HashMap<i64, Sender<MessageWithGroupResponseDto>>>>,
         id_generator: Arc<Mutex<SnowflakeIdGenerator>>,
 
-        cognito_service: CognitoService,
-        s3_service: S3Service,
+        google_cloud_storage_service: GoogleCloudStorageService,
 
         group_repository: GroupRepository,
         message_repository: MessageRepository,
@@ -258,14 +256,21 @@ async fn main() {
                 .build()
                 .arced();
 
-        let aws_config = aws_config::load_from_env().await;
+        let gcp_config = google_cloud_storage::client::ClientConfig::default()
+                .with_auth()
+                .await
+                .expect("Failed to load Google Cloud Storage credentials");
 
         let app_state = Arc::new(AppState {
                 auth_user_cache: Arc::new(RwLock::new(HashMap::new())),
                 message_senders: Arc::new(RwLock::new(HashMap::new())),
+
                 id_generator: Arc::new(Mutex::new(SnowflakeIdGenerator::new(1, 1))),
-                cognito_service: CognitoService::new(aws_sdk_cognitoidentityprovider::Client::new(&aws_config)),
-                s3_service: S3Service::new(aws_sdk_s3::Client::new(&aws_config)),
+
+                google_cloud_storage_service: GoogleCloudStorageService::new(
+                        google_cloud_storage::client::Client::new(gcp_config),
+                ),
+
                 group_repository: GroupRepository::new(pool.clone()),
                 message_repository: MessageRepository::new(pool.clone()),
                 message_request_repository: MessageRequestRepository::new(pool.clone()),

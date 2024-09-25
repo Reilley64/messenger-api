@@ -7,6 +7,9 @@ use crate::models::{GroupWithRelationships, MessageRequestWithRelationships, Use
 #[derive(Type, Clone, Deserialize, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct UserRequestDto {
+        pub email: String,
+        pub first_name: String,
+        pub last_name: String,
         pub public_key: String,
 }
 

@@ -1,5 +1,4 @@
 use std::collections::HashMap;
-use std::env;
 use std::str::FromStr;
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime};
@@ -25,6 +24,7 @@ struct JwkKey {
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct Claims {
         pub sub: String,
+        pub email: String,
         exp: usize,
 }
 
@@ -38,7 +38,9 @@ lazy_static! {
         static ref TOKEN_CACHE: Arc<RwLock<HashMap<String, CachedTokenData>>> = Arc::new(RwLock::new(HashMap::new()));
 }
 
-async fn fetch_jwks(jwks_url: &str) -> Result<Vec<JwkKey>, Box<dyn std::error::Error>> {
+async fn fetch_jwks() -> Result<Vec<JwkKey>, Box<dyn std::error::Error>> {
+        let jwks_url = "https://www.googleapis.com/service_accounts/v1/jwk/securetoken@system.gserviceaccount.com";
+
         info!("Starting to fetch JWKS from URL: {}", jwks_url);
 
         let client = Client::new();
@@ -91,15 +93,7 @@ async fn fetch_jwks(jwks_url: &str) -> Result<Vec<JwkKey>, Box<dyn std::error::E
 }
 
 async fn refresh_jwks_cache() -> Result<(), Box<dyn std::error::Error>> {
-        let aws_region = env::var("AWS_REGION").expect("AWS_REGION must be set");
-        let aws_cognito_user_pool_id =
-                env::var("AWS_COGNITO_USER_POOL_ID").expect("AWS_COGNITO_USER_POOL_ID must be set");
-
-        let jwks_url = format!(
-                "https://cognito-idp.{}.amazonaws.com/{}/.well-known/jwks.json",
-                aws_region, aws_cognito_user_pool_id,
-        );
-        let jwks = fetch_jwks(&jwks_url).await?;
+        let jwks = fetch_jwks().await?;
 
         let mut cache = JWKS_CACHE.write().await;
         cache.clear();
@@ -123,23 +117,18 @@ async fn get_jwk(kid: &str) -> Result<JwkKey, Box<dyn std::error::Error>> {
 }
 
 async fn decode_token(token: &str) -> Result<TokenData<Claims>, jsonwebtoken::errors::Error> {
-        let aws_region = env::var("AWS_REGION").expect("AWS_REGION must be set");
-        let aws_cognito_user_pool_id =
-                env::var("AWS_COGNITO_USER_POOL_ID").expect("AWS_COGNITO_USER_POOL_ID must be set");
-
         let header = decode_header(token)?;
         let kid = header.kid.ok_or(jsonwebtoken::errors::ErrorKind::InvalidToken)?;
 
         let jwk = get_jwk(&kid)
                 .await
                 .map_err(|_| jsonwebtoken::errors::ErrorKind::InvalidKeyFormat)?;
+        tracing::debug!("jwk: {:?}", jwk);
 
         let decoding_key = DecodingKey::from_rsa_components(&jwk.n, &jwk.e)?;
         let mut validation = Validation::new(Algorithm::from_str(&jwk.alg)?);
-        validation.set_issuer(&[format!(
-                "https://cognito-idp.{}.amazonaws.com/{}",
-                aws_region, aws_cognito_user_pool_id
-        )]);
+        validation.set_audience(&["messenger-436700"]);
+        validation.set_issuer(&["https://securetoken.google.com/messenger-436700"]);
 
         decode::<Claims>(token, &decoding_key, &validation)
 }

@@ -36,23 +36,6 @@ pub async fn create_user(ctx: RequestContext, user_request: UserRequestDto) -> R
                 return Err(Error::new(ErrorCode::Conflict, "User already exists".into()));
         }
 
-        let cognito_user = ctx.app_state.cognito_service.get_cognito_user(sub.clone()).await?;
-
-        let mut email = String::new();
-        let mut phone_number = String::new();
-        let mut first_name = String::new();
-        let mut last_name = String::new();
-
-        for attribute in cognito_user.user_attributes.unwrap_or_default() {
-                match attribute.name.as_str() {
-                        "email" => email = attribute.value.unwrap_or_default(),
-                        "phone_number" => phone_number = attribute.value.unwrap_or_default(),
-                        "given_name" => first_name = attribute.value.unwrap_or_default(),
-                        "family_name" => last_name = attribute.value.unwrap_or_default(),
-                        _ => {}
-                }
-        }
-
         let user = {
                 let mut id_generator = ctx.app_state.id_generator.lock().unwrap();
                 ctx.app_state.user_repository.save(User {
@@ -60,10 +43,9 @@ pub async fn create_user(ctx: RequestContext, user_request: UserRequestDto) -> R
                         created_at: Utc::now().naive_utc(),
                         updated_at: Utc::now().naive_utc(),
                         sub: sub.clone().to_string(),
-                        email,
-                        phone_number,
-                        first_name,
-                        last_name,
+                        email: user_request.email.clone(),
+                        first_name: user_request.first_name.clone(),
+                        last_name: user_request.last_name.clone(),
                         display_name: None,
                         public_key: user_request.public_key.clone(),
                 })?
@@ -82,7 +64,7 @@ pub async fn create_user_profile_picture_presigned_upload_url(
 
         let presigned_url = ctx
                 .app_state
-                .s3_service
+                .google_cloud_storage_service
                 .get_presigned_upload_url(format!("u/{}", auth_user.id), presigned_upload_url_request.content_type)
                 .await?;
 

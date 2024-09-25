@@ -11,7 +11,6 @@ pub struct User {
         pub updated_at: chrono::NaiveDateTime,
         pub sub: String,
         pub email: String,
-        pub phone_number: String,
         pub first_name: String,
         pub last_name: String,
         pub display_name: Option<String>,

@@ -1,2 +1,1 @@
-pub mod cognito_service;
-pub mod s3_service;
+pub mod google_cloud_storage_service;
